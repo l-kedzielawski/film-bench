@@ -1135,6 +1135,11 @@ def save_ref(slug, body):
         if not ref:
             raise ValueError('no such reference')
         if body.get('delete'):
+            # a reference is a pointer, not work: the file goes with the node
+            try:
+                os.remove(ref_path(slug, ref))
+            except OSError:
+                pass
             film['refs'] = [r for r in film['refs'] if r['id'] != rid]
             for sh in film['shots']:
                 if sh.get('refs'):
