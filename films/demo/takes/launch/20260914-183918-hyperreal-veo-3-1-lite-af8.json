@@ -1,0 +1,25 @@
+{
+  "kind": "video",
+  "model": "google/veo-3.1-lite",
+  "prompt": "Hyperreal live-action cinematography. Everything in frame is a real object photographed on a real location at dawn: one low warm key light from the horizon, true material response, real lens character with shallow depth of field, faint sensor grain. Restrained and quiet, nothing decorative in frame.\n\nFour seconds, locked-off camera just above the water. The hand releases the paper boat and withdraws out of frame. The boat settles, rocks once, and begins to drift slowly to the right. No camera move.",
+  "style_id": "hyperreal",
+  "style_name": "Hyperreal",
+  "style_prompt": "Hyperreal live-action cinematography. Everything in frame is a real object photographed on a real location at dawn: one low warm key light from the horizon, true material response, real lens character with shallow depth of field, faint sensor grain. Restrained and quiet, nothing decorative in frame.",
+  "content_prompt": "Four seconds, locked-off camera just above the water. The hand releases the paper boat and withdraws out of frame. The boat settles, rocks once, and begins to drift slowly to the right. No camera move.",
+  "params": {
+    "models": [
+      "google/veo-3.1-lite"
+    ],
+    "duration": 4,
+    "resolution": "720p",
+    "aspect": "16:9",
+    "audio": false,
+    "seed": null
+  },
+  "first_frame": "frames/launch-first.png",
+  "last_frame": null,
+  "cost_usd": 0.12,
+  "film": "demo",
+  "shot": "launch",
+  "at": "2026-09-14T18:40:14"
+}

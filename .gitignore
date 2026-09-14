@@ -1,0 +1,11 @@
+# The key. Never commit it.
+.env
+
+# Every real call is appended here with its cost. Yours, not the repo's.
+genlog.jsonl
+
+__pycache__/
+*.pyc
+
+# Stitched output is derived from the takes; the takes themselves are the work.
+films/*/cut.mp4

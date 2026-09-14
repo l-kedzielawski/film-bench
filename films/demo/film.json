@@ -1,0 +1,81 @@
+{
+  "title": "Paper boat",
+  "lane": "undecided",
+  "note": "A two-shot demo. The same two beats rendered in two styles, so the comparison is of looks and not of prompts. Stills first; clips only once a look is chosen.",
+  "styles": [
+    {
+      "id": "hyperreal",
+      "name": "Hyperreal",
+      "note": "Live action, as if a camera was there.",
+      "prompt": "Hyperreal live-action cinematography. Everything in frame is a real object photographed on a real location at dawn: one low warm key light from the horizon, true material response, real lens character with shallow depth of field, faint sensor grain. Restrained and quiet, nothing decorative in frame."
+    },
+    {
+      "id": "paper",
+      "name": "Paper cut-out",
+      "note": "The whole world is paper, lit like a real set.",
+      "prompt": "A stop-motion paper cut-out world. Every surface is layered card and torn paper with visible fibre and slight warps, lit by a real studio lamp so the paper edges cast soft shadows. Colours are muted and slightly desaturated. The camera is a real macro lens with shallow depth of field. Hand-made and imperfect, held the same way in every shot."
+    }
+  ],
+  "shots": [
+    {
+      "id": "launch",
+      "title": "Launch — the boat is set on the water",
+      "note": "The film opens on the moment of letting go. The hand leaves the frame; the boat stays.",
+      "first_frame": "frames/launch-first.png",
+      "last_frame": null,
+      "selected_take": "20260914-183918-hyperreal-veo-3-1-lite-af8",
+      "styles": [
+        "hyperreal",
+        "paper"
+      ],
+      "frame": {
+        "prompt": "Close on the surface of a still pond at dawn. A hand lowers a small folded paper boat onto the water and lets go. The boat is the subject; the fingers are already lifting away. Mist hangs low behind.",
+        "models": [
+          "google/gemini-3.1-flash-image"
+        ],
+        "n": 1
+      },
+      "clip": {
+        "prompt": "Four seconds, locked-off camera just above the water. The hand releases the paper boat and withdraws out of frame. The boat settles, rocks once, and begins to drift slowly to the right. No camera move.",
+        "models": [
+          "google/veo-3.1-lite"
+        ],
+        "duration": 4,
+        "resolution": "720p",
+        "aspect": "16:9",
+        "audio": false,
+        "seed": null
+      }
+    },
+    {
+      "id": "drift",
+      "title": "Drift — into the light",
+      "note": "The second beat follows the boat into the sun. It ends before the boat leaves frame.",
+      "first_frame": null,
+      "last_frame": null,
+      "selected_take": null,
+      "styles": [
+        "hyperreal",
+        "paper"
+      ],
+      "frame": {
+        "prompt": "Low over the water, looking into the rising sun. The paper boat drifts away from the camera toward the brightest part of the frame, its wake a faint ripple. Backlit, the paper glows at its edges.",
+        "models": [
+          "google/gemini-3.1-flash-image"
+        ],
+        "n": 1
+      },
+      "clip": {
+        "prompt": "Four seconds. The paper boat drifts slowly away from the camera into the backlight. The ripples widen behind it. The camera holds still.",
+        "models": [
+          "google/veo-3.1-lite"
+        ],
+        "duration": 4,
+        "resolution": "720p",
+        "aspect": "16:9",
+        "audio": false,
+        "seed": null
+      }
+    }
+  ]
+}

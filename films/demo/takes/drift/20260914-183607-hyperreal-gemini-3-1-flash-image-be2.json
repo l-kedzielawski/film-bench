@@ -1,0 +1,21 @@
+{
+  "kind": "image",
+  "model": "google/gemini-3.1-flash-image",
+  "prompt": "Hyperreal live-action cinematography. Everything in frame is a real object photographed on a real location at dawn: one low warm key light from the horizon, true material response, real lens character with shallow depth of field, faint sensor grain. Restrained and quiet, nothing decorative in frame.\n\nLow over the water, looking into the rising sun. The paper boat drifts away from the camera toward the brightest part of the frame, its wake a faint ripple. Backlit, the paper glows at its edges.",
+  "style_id": "hyperreal",
+  "style_name": "Hyperreal",
+  "style_prompt": "Hyperreal live-action cinematography. Everything in frame is a real object photographed on a real location at dawn: one low warm key light from the horizon, true material response, real lens character with shallow depth of field, faint sensor grain. Restrained and quiet, nothing decorative in frame.",
+  "content_prompt": "Low over the water, looking into the rising sun. The paper boat drifts away from the camera toward the brightest part of the frame, its wake a faint ripple. Backlit, the paper glows at its edges.",
+  "params": {
+    "models": [
+      "google/gemini-3.1-flash-image"
+    ],
+    "n": 1
+  },
+  "first_frame": null,
+  "last_frame": null,
+  "cost_usd": 0.067251,
+  "film": "demo",
+  "shot": "drift",
+  "at": "2026-09-14T18:36:18"
+}

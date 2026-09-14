@@ -1,0 +1,398 @@
+#!/usr/bin/env python3
+"""gen — the only path to OpenRouter media generation for film-bench.
+
+The API key lives in film-bench/.env (chmod 600) and is read by this script
+alone. Nothing that calls this script ever sees the key, so it cannot end up in
+an agent transcript, a log, or a repo.
+
+Every generation appends a provenance line to genlog.jsonl: which model made
+which file, from what prompt, for how much. That is the record the EU AI Act
+(Art. 50) asks for, and it is what the bench reads to price a still.
+
+Usage
+  gen models image|video [PATTERN]
+  gen price MODEL [--duration N] [--resolution R] [--audio]
+  gen image --model M --prompt P --out FILE [-n N] [--ref IMG]... [--extra JSON] [--dry-run]
+  gen video --model M --prompt P --out FILE [--duration N] [--resolution R]
+            [--aspect A] [--first-frame F] [--last-frame F] [--no-audio]
+            [--seed N] [--extra JSON] [--dry-run]
+  gen spend
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import mimetypes
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+from http.client import IncompleteRead, RemoteDisconnected
+from pathlib import Path
+
+API = "https://openrouter.ai/api/v1"
+_HERE = Path(__file__).resolve().parent          # film-bench/bin
+_BENCH = _HERE.parent                            # film-bench
+
+
+def _find_env() -> Path:
+    """Key file: $FILMBENCH_ENV, otherwise film-bench/.env."""
+    env = os.environ.get("FILMBENCH_ENV")
+    return Path(env) if env else _BENCH / ".env"
+
+
+ENV_PATH = _find_env()
+LOG_PATH = Path(os.environ.get("FILMBENCH_LOG") or (_BENCH / "genlog.jsonl"))
+
+
+# ---------------------------------------------------------------- key handling
+
+def load_key() -> str:
+    """Read the key from the env file. Never echo it, never put it in argv."""
+    if not ENV_PATH.exists():
+        die(
+            f"no key file at {ENV_PATH}\n"
+            f"  mkdir -p {ENV_PATH.parent} && touch {ENV_PATH} && chmod 600 {ENV_PATH}\n"
+            f"  then add one line:  OPENROUTER_API_KEY=sk-or-v1-..."
+        )
+    mode = ENV_PATH.stat().st_mode & 0o777
+    if mode & 0o077:
+        die(f"{ENV_PATH} is mode {mode:o}; run: chmod 600 {ENV_PATH}")
+    for line in ENV_PATH.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("OPENROUTER_API_KEY="):
+            key = line.split("=", 1)[1].strip().strip("'\"")
+            if key:
+                return key
+    die(f"{ENV_PATH} has no non-empty OPENROUTER_API_KEY= line")
+
+
+def die(msg: str) -> "None":
+    print(f"gen: {msg}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+# ------------------------------------------------------------------- transport
+
+def request(method: str, path: str, body: dict | None = None, raw: bool = False):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(f"{API}{path}", data=data, method=method)
+    req.add_header("Authorization", f"Bearer {load_key()}")
+    req.add_header("X-Title", "film-bench")
+    if data:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            payload = resp.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")[:900]
+        die(f"HTTP {exc.code} on {method} {path}\n{detail}")
+    except urllib.error.URLError as exc:
+        die(f"network error on {method} {path}: {exc.reason}")
+    except (RemoteDisconnected, IncompleteRead, ConnectionResetError) as exc:
+        # OpenRouter closes a slow /images request at ~60s with no status code and
+        # no error body — AND BILLS THE GENERATION ANYWAY. Retrying pays twice for
+        # the same nothing. Observed with seedream-5-0-pro image-to-image, which
+        # exceeds it every time; seedream-4.5 does the same job in ~9s.
+        if path == "/images":
+            die(
+                "the connection died with no response after ~60s, which on /images means the model "
+                "ran past OpenRouter's synchronous limit.\n"
+                "  THE GENERATION WAS STILL BILLED. Do not retry the same model — use a faster one "
+                "(bytedance-seed/seedream-4.5 for image-to-image) or a smaller --resolution."
+            )
+        die(f"connection closed with no response on {method} {path}: {exc}")
+    return payload if raw else json.loads(payload)
+
+
+def public_get(path: str) -> dict:
+    """Model catalogues are public — no key needed, so `models` works before setup."""
+    with urllib.request.urlopen(f"{API}{path}", timeout=60) as resp:
+        return json.loads(resp.read())
+
+
+# ----------------------------------------------------------------- provenance
+
+def log(entry: dict) -> None:
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    entry["at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    with LOG_PATH.open("a") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+# --------------------------------------------------------------------- pricing
+
+def model_record(kind: str, model_id: str) -> dict:
+    for m in public_get(f"/{kind}s/models")["data"]:
+        if m["id"] == model_id:
+            return m
+    die(f"unknown {kind} model {model_id!r} — try: gen models {kind}")
+
+
+def video_sku(skus: dict, resolution: str | None, audio: bool) -> tuple[str, float] | None:
+    """Pick the most specific matching per-second SKU. Returns (sku_name, usd_per_s)."""
+    res = (resolution or "").lower().replace("p", "p")
+    want_audio = "with_audio" if audio else "without_audio"
+    candidates = [
+        f"duration_seconds_{want_audio}_{res}",
+        f"duration_seconds_{want_audio}",
+        f"duration_seconds_{res}",
+        "duration_seconds",
+        f"cents_per_video_output_second_{res}",
+        "cents_per_second_output",
+    ]
+    for name in candidates:
+        if name in skus:
+            val = float(skus[name])
+            return name, val / 100 if name.startswith("cents_") else val
+    return None
+
+
+def cmd_price(args) -> None:
+    kind = "video" if "video" in args.model or args.duration else None
+    for k in (["video", "image"] if kind is None else [kind]):
+        try:
+            rec = model_record(k, args.model)
+        except SystemExit:
+            continue
+        skus = rec.get("pricing_skus") or {}
+        print(f"{rec['id']}  ({k})")
+        for name, val in sorted(skus.items()):
+            print(f"  {name:<48} {val}")
+        if k == "video":
+            hit = video_sku(skus, args.resolution, args.audio)
+            if hit:
+                dur = args.duration or (rec.get("supported_durations") or [8])[0]
+                print(f"  -> {dur}s @ {hit[0]} = ${dur * hit[1]:.2f}")
+        return
+    die(f"model {args.model!r} not found in the image or video catalogue")
+
+
+def cmd_models(args) -> None:
+    kind = args.kind
+    rows = public_get(f"/{kind}s/models")["data"]
+    for m in rows:
+        if args.pattern and args.pattern.lower() not in m["id"].lower():
+            continue
+        bits = []
+        if m.get("supported_durations"):
+            bits.append(f"dur={m['supported_durations']}")
+        if m.get("supported_resolutions"):
+            bits.append(f"res={m['supported_resolutions']}")
+        # Which keyframe slots the model accepts. A first/mid/last storyboard is
+        # really a chain of first+last clips, so this decides what can join it.
+        if m.get("supported_frame_images"):
+            bits.append("frames=" + ",".join(
+                s.replace("_frame", "") for s in m["supported_frame_images"]))
+        skus = m.get("pricing_skus") or {}
+        hit = video_sku(skus, "1080p", True) if kind == "video" else None
+        if hit:
+            bits.append(f"${hit[1]}/s")
+        print(f"{m['id']:<42} {' '.join(bits)}")
+
+
+def cmd_spend(_args) -> None:
+    d = request("GET", "/key").get("data", {})
+    for field in ("label", "usage", "limit", "limit_remaining", "is_free_tier", "rate_limit"):
+        if field in d:
+            print(f"{field:<16} {d[field]}")
+
+
+# ----------------------------------------------------------------------- image
+
+def image_ref(path: str) -> dict:
+    """One input_references entry — an image the model edits from.
+
+    This is how editing works on this API: there is NO mask parameter on any
+    image model OpenRouter exposes (checked September 2026), so a region is
+    communicated by sending a marked-up copy alongside the original and saying
+    so in the prompt, not by uploading an alpha mask.
+    """
+    p = Path(path)
+    if not p.exists():
+        die(f"reference image not found: {p}")
+    mime = mimetypes.guess_type(p.name)[0] or "image/png"
+    url = f"data:{mime};base64,{base64.b64encode(p.read_bytes()).decode()}"
+    return {"type": "image_url", "image_url": {"url": url}}
+
+
+def cmd_image(args) -> None:
+    body = {"model": args.model, "prompt": args.prompt}
+    if args.n > 1:
+        body["n"] = args.n
+    if args.ref:
+        body["input_references"] = [image_ref(r) for r in args.ref]
+    body.update(json.loads(args.extra) if args.extra else {})
+    if args.dry_run:
+        redacted = dict(body)
+        if "input_references" in redacted:
+            redacted["input_references"] = [
+                f"<{len(r['image_url']['url'])} bytes data url>" for r in redacted["input_references"]]
+        print(json.dumps(redacted, indent=2, ensure_ascii=False))
+        return
+    out = Path(args.out)
+    res = request("POST", "/images", body)
+    cost = (res.get("usage") or {}).get("cost")
+    paths = []
+    for i, item in enumerate(res.get("data", [])):
+        blob = item.get("b64_json")
+        if not blob:
+            die(f"no b64_json in response item {i}: {json.dumps(item)[:200]}")
+        ext = mimetypes.guess_extension(item.get("media_type", "image/png")) or ".png"
+        target = out if len(res["data"]) == 1 else out.with_name(f"{out.stem}_{i:02d}{out.suffix or ext}")
+        target = target if target.suffix else target.with_suffix(ext)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(base64.b64decode(blob))
+        paths.append(str(target))
+        print(target)
+    log({"kind": "image", "model": args.model, "prompt": args.prompt,
+         "cost_usd": cost, "outputs": paths, "extra": body.get("extra")})
+    if cost is not None:
+        print(f"cost ${cost}", file=sys.stderr)
+
+
+# ----------------------------------------------------------------------- video
+
+def frame_arg(path: str, frame_type: str) -> dict:
+    """One frame_images entry. OpenRouter takes the image as a data URL.
+
+    frame_images is an ARRAY of typed entries, each naming its own frame_type.
+    An object keyed by first_frame/last_frame is rejected with a ZodError, which
+    is what this used to send.
+    """
+    p = Path(path)
+    if not p.exists():
+        die(f"frame image not found: {p}")
+    mime = mimetypes.guess_type(p.name)[0] or "image/png"
+    url = f"data:{mime};base64,{base64.b64encode(p.read_bytes()).decode()}"
+    return {"type": "image_url", "image_url": {"url": url}, "frame_type": frame_type}
+
+
+def cmd_video(args) -> None:
+    rec = model_record("video", args.model)
+    body = {"model": args.model, "prompt": args.prompt}
+    if args.duration:
+        body["duration"] = args.duration
+    if args.resolution:
+        body["resolution"] = args.resolution
+    if args.aspect:
+        body["aspect_ratio"] = args.aspect
+    if args.seed is not None:
+        body["seed"] = args.seed
+    if rec.get("generate_audio"):
+        body["generate_audio"] = not args.no_audio
+    supported = rec.get("supported_frame_images") or []
+    frames = []
+    for path_arg, frame_type in ((args.first_frame, "first_frame"), (args.last_frame, "last_frame")):
+        if not path_arg:
+            continue
+        if supported and frame_type not in supported:
+            die(f"{args.model} does not support {frame_type} (supports: {', '.join(supported) or 'none'})")
+        frames.append(frame_arg(path_arg, frame_type))
+    if frames:
+        body["frame_images"] = frames
+    body.update(json.loads(args.extra) if args.extra else {})
+
+    hit = video_sku(rec.get("pricing_skus") or {}, args.resolution, not args.no_audio)
+    dur = args.duration or (rec.get("supported_durations") or [8])[0]
+    # The per-second SKU is a FLOOR. A 2s wan-2.7 clip priced at $0.20 billed
+    # $0.50, so some models charge a per-job minimum. Never call this a quote.
+    est = f"at least ${dur * hit[1]:.2f}" if hit else "unknown"
+    if args.dry_run:
+        redacted = dict(body)
+        if "frame_images" in redacted:
+            redacted["frame_images"] = [
+                {"frame_type": f["frame_type"], "image_url": f"<{len(f['image_url']['url'])} bytes data url>"}
+                for f in frames
+            ]
+        print(json.dumps(redacted, indent=2, ensure_ascii=False))
+        print(f"cost {est}", file=sys.stderr)
+        return
+
+    print(f"submitting {args.model}, {dur}s, {est}", file=sys.stderr)
+    job = request("POST", "/videos", body)
+    job_id = job.get("id") or die(f"no job id in response: {json.dumps(job)[:300]}")
+    waited = 0
+    while True:
+        time.sleep(10)
+        waited += 10
+        state = request("GET", f"/videos/{job_id}")
+        status = state.get("status")
+        print(f"  {waited}s {status}", file=sys.stderr)
+        if status == "completed":
+            break
+        if status in ("failed", "cancelled"):
+            die(f"generation {status}: {json.dumps(state.get('error') or state)[:400]}")
+        if waited > 1800:
+            die(f"still {status} after 30 min; job {job_id}")
+
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(request("GET", f"/videos/{job_id}/content?index=0", raw=True))
+    cost = (state.get("usage") or {}).get("cost")
+    log({"kind": "video", "model": args.model, "prompt": args.prompt, "job": job_id,
+         "duration_s": dur, "resolution": args.resolution, "audio": not args.no_audio,
+         "first_frame": args.first_frame, "last_frame": args.last_frame,
+         "cost_usd": cost, "estimated_usd": dur * hit[1] if hit else None,
+         "outputs": [str(out)]})
+    print(out)
+    print(f"cost ${cost if cost is not None else '(not reported)'}", file=sys.stderr)
+
+
+# ------------------------------------------------------------------------ main
+
+def main() -> None:
+    ap = argparse.ArgumentParser(prog="gen", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    m = sub.add_parser("models", help="list image or video models with prices")
+    m.add_argument("kind", choices=["image", "video"])
+    m.add_argument("pattern", nargs="?")
+    m.set_defaults(fn=cmd_models)
+
+    p = sub.add_parser("price", help="show every pricing SKU for one model")
+    p.add_argument("model")
+    p.add_argument("--duration", type=int)
+    p.add_argument("--resolution")
+    p.add_argument("--audio", action="store_true")
+    p.set_defaults(fn=cmd_price)
+
+    s = sub.add_parser("spend", help="key usage and remaining limit")
+    s.set_defaults(fn=cmd_spend)
+
+    i = sub.add_parser("image", help="generate a still")
+    i.add_argument("--model", required=True)
+    i.add_argument("--prompt", required=True)
+    i.add_argument("--out", required=True)
+    i.add_argument("-n", type=int, default=1)
+    i.add_argument("--extra", help="extra JSON merged into the request body")
+    i.add_argument("--ref", action="append", default=[],
+                   help="reference image to edit from; repeatable")
+    i.add_argument("--dry-run", action="store_true")
+    i.set_defaults(fn=cmd_image)
+
+    v = sub.add_parser("video", help="generate a clip (submits, polls, downloads)")
+    v.add_argument("--model", required=True)
+    v.add_argument("--prompt", required=True)
+    v.add_argument("--out", required=True)
+    v.add_argument("--duration", type=int)
+    v.add_argument("--resolution")
+    v.add_argument("--aspect")
+    v.add_argument("--first-frame")
+    v.add_argument("--last-frame")
+    v.add_argument("--no-audio", action="store_true")
+    v.add_argument("--seed", type=int)
+    v.add_argument("--extra", help="extra JSON merged into the request body")
+    v.add_argument("--dry-run", action="store_true")
+    v.set_defaults(fn=cmd_video)
+
+    args = ap.parse_args()
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()

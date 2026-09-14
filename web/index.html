@@ -1,0 +1,168 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>film-bench</title>
+<link rel="stylesheet" href="/web/style.css">
+
+<div id="crash" hidden></div>
+<script>
+// A script error here used to mean silently dead buttons: the wiring at the
+// bottom of app.js never runs, but the page still renders. Say so instead.
+window.addEventListener('error', e => {
+  const b = document.getElementById('crash');
+  if (!b) return;
+  b.hidden = false;
+  b.textContent = 'SCRIPT ERROR — buttons will not work: ' + e.message +
+    '  (' + (e.filename || '').split('/').pop() + ':' + e.lineno + ')';
+});
+</script>
+
+<header id="top">
+  <span class="brand">film<b>bench</b></span>
+  <select id="filmPick" title="film"></select>
+  <button id="newFilm" class="ghost" title="new film">+ film</button>
+  <span class="grow"></span>
+  <div class="zoom">
+    <button id="zoomOut" class="ghost" title="zoom out  (ctrl + wheel)">−</button>
+    <button id="zoomPct" class="ghost" title="back to 100%">100%</button>
+    <button id="zoomIn" class="ghost" title="zoom in  (ctrl + wheel)">+</button>
+    <button id="fit" class="ghost" title="fit the whole film  (F)">fit</button>
+  </div>
+  <span class="grow"></span>
+  <button id="running" class="pill" hidden>● 0 running</button>
+  <button id="stylesBtn" class="ghost" title="the looks — one per lane">styles</button>
+  <button id="stitch" class="ghost" title="join the picked clip of every shot, in order, into one file">stitch</button>
+  <span id="spend" class="chip" title="OpenRouter key usage — click to refresh">…</span>
+  <button id="arm" class="arm" data-armed="0">DISARMED</button>
+</header>
+
+<!-- The canvas. Boards are shots in film order; cards are takes. Drag the
+     background to pan, ctrl+wheel to zoom, drag a card onto a frame slot. -->
+<div id="canvas">
+  <div id="world"></div>
+  <div id="canvasEmpty" class="empty" hidden>
+    <b>No film yet.</b><br>Press <kbd>+ film</kbd> in the top bar, then add a shot.
+  </div>
+</div>
+
+<!-- The prompt bar. It writes to the board you last clicked. -->
+<div id="bar">
+  <div class="bar-row">
+    <div class="seg" title="stills are the cheap gate — judge the look here before paying for a clip">
+      <button class="mode on" data-mode="frame">Still</button>
+      <button class="mode" data-mode="clip">Clip</button>
+    </div>
+    <button id="target" class="target" title="the shot this bar writes to — click to centre it">no shot</button>
+    <span class="grow"></span>
+    <span class="lbl">styles</span>
+    <div id="barStyles" class="chips-inline"></div>
+    <button id="manageStyles" class="ghost tiny" title="add or edit the looks">+</button>
+  </div>
+  <div class="bar-row main">
+    <textarea id="prompt" rows="2"></textarea>
+    <div class="bar-go">
+      <button id="gen" class="gen">Generate</button>
+      <button id="est" class="ghost tiny" title="free — prints the exact request and its list price">estimate</button>
+    </div>
+  </div>
+  <div class="bar-row">
+    <span class="lbl">models</span>
+    <div id="barModels" class="chips-inline"></div>
+    <button id="pickModels" class="ghost tiny" title="pick from the live catalogue">+</button>
+    <span class="sep"></span>
+    <div id="clipParams" class="params" hidden>
+      <label>sec <input id="clipDuration" type="number" min="1" max="30" step="1"></label>
+      <label>res <input id="clipResolution" list="resList"></label>
+      <label>aspect <input id="clipAspect" list="aspectList"></label>
+      <label>seed <input id="clipSeed" type="number" placeholder="—"></label>
+      <label class="cb"><input id="clipAudio" type="checkbox"> audio</label>
+    </div>
+    <div id="frameParams" class="params">
+      <label>n <input id="frameN" type="number" min="1" max="4" step="1"></label>
+    </div>
+    <span class="grow"></span>
+    <button id="composedBtn" class="ghost tiny" title="the exact text that gets sent, per style">composed</button>
+    <span id="cost" class="hint"></span>
+  </div>
+  <p id="warn" class="warn" hidden></p>
+</div>
+
+<!-- Right panel: the selected take, the styles, or the live log. Closed until
+     something wants it. -->
+<aside id="side" hidden>
+  <div class="side-tabs">
+    <button class="stab on" data-t="take">Take</button>
+    <button class="stab" data-t="styles">Styles</button>
+    <button class="stab" data-t="activity">Activity <span id="actCount"></span></button>
+    <span class="grow"></span>
+    <button id="sideClose" class="ghost" title="close  (Esc)">✕</button>
+  </div>
+  <div class="spane" data-t="take" id="takePane">
+    <p class="hint pad">Click a card to see what made it.</p>
+  </div>
+  <div class="spane" data-t="styles" hidden>
+    <div class="spane-head">
+      <p class="hint">A style is the look — medium, rendering, lighting, lens, finish: whatever is true of every shot in a lane. Shots supply the content. Edits save as you type.</p>
+      <button id="addStyle">+ new style</button>
+    </div>
+    <div id="styleCards"></div>
+  </div>
+  <div class="spane" data-t="activity" hidden>
+    <div class="spane-head row">
+      <span class="hint">Every line the generator writes, live.</span>
+      <button id="clearJobs" class="ghost tiny">clear done</button>
+    </div>
+    <div id="jobs"></div>
+  </div>
+</aside>
+
+<datalist id="resList"><option value="720p"><option value="1080p"><option value="2k"></datalist>
+<datalist id="aspectList"><option value="16:9"><option value="9:16"><option value="1:1"><option value="4:3"></datalist>
+
+<!-- generic anchored popover (model picker, composed text, board menu) -->
+<div id="pop" hidden></div>
+
+<!-- in-page dialogs — never window.prompt/confirm/alert -->
+<div id="ask" hidden>
+  <div class="ask-box">
+    <p id="askMsg"></p>
+    <input id="askInput">
+    <div class="ask-acts">
+      <button id="askNo" class="ghost">Cancel</button>
+      <button id="askYes">OK</button>
+    </div>
+  </div>
+</div>
+<div id="toast" hidden></div>
+<div id="dragGhost" hidden></div>
+
+<!-- lightbox: enlarge, paint a region, edit; step through the shot's takes -->
+<div id="lb" hidden>
+  <div class="lb-bar">
+    <button id="lbPrev" class="ghost" title="previous take  (←)">←</button>
+    <button id="lbNext" class="ghost" title="next take  (→)">→</button>
+    <b id="lbTitle"></b>
+    <span class="grow"></span>
+    <span id="lbMaskTools">
+      <label class="cb">brush <input id="lbBrush" type="range" min="10" max="220" value="60"></label>
+      <button id="lbClear" class="ghost">clear mask</button>
+    </span>
+    <button id="lbClose" class="ghost">close ✕</button>
+  </div>
+  <div class="lb-stage">
+    <img id="lbImg" alt="" hidden>
+    <video id="lbVid" controls hidden></video>
+    <canvas id="lbCanvas" hidden></canvas>
+  </div>
+  <div class="lb-foot" id="lbFoot">
+    <textarea id="lbInstr" rows="2" placeholder="What to change. Paint over an area first to limit it — otherwise the whole image is fair game."></textarea>
+    <div class="lb-go">
+      <button id="lbEdit">Edit</button>
+      <button id="lbGrabFirst" class="ghost">↑ first frame</button>
+      <button id="lbGrabLast" class="ghost">↑ last frame</button>
+      <span id="lbNote" class="hint"></span>
+    </div>
+  </div>
+</div>
+
+<script src="/web/app.js"></script>

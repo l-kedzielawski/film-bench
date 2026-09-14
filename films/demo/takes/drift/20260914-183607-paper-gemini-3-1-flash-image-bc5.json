@@ -1,0 +1,21 @@
+{
+  "kind": "image",
+  "model": "google/gemini-3.1-flash-image",
+  "prompt": "A stop-motion paper cut-out world. Every surface is layered card and torn paper with visible fibre and slight warps, lit by a real studio lamp so the paper edges cast soft shadows. Colours are muted and slightly desaturated. The camera is a real macro lens with shallow depth of field. Hand-made and imperfect, held the same way in every shot.\n\nLow over the water, looking into the rising sun. The paper boat drifts away from the camera toward the brightest part of the frame, its wake a faint ripple. Backlit, the paper glows at its edges.",
+  "style_id": "paper",
+  "style_name": "Paper cut-out",
+  "style_prompt": "A stop-motion paper cut-out world. Every surface is layered card and torn paper with visible fibre and slight warps, lit by a real studio lamp so the paper edges cast soft shadows. Colours are muted and slightly desaturated. The camera is a real macro lens with shallow depth of field. Hand-made and imperfect, held the same way in every shot.",
+  "content_prompt": "Low over the water, looking into the rising sun. The paper boat drifts away from the camera toward the brightest part of the frame, its wake a faint ripple. Backlit, the paper glows at its edges.",
+  "params": {
+    "models": [
+      "google/gemini-3.1-flash-image"
+    ],
+    "n": 1
+  },
+  "first_frame": null,
+  "last_frame": null,
+  "cost_usd": 0.0672595,
+  "film": "demo",
+  "shot": "drift",
+  "at": "2026-09-14T18:36:20"
+}
