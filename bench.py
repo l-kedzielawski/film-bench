@@ -221,8 +221,41 @@ def compose(style_prompt, content):
     return (style_prompt + '\n\n' + content).strip()
 
 
+def compose_full(style_prompt, content, refs=None):
+    out = compose(style_prompt, content)
+    block = refs_block(refs)
+    return (out + '\n\n' + block).strip() if block else out
+
+
 def film_styles(film):
     return film.get('styles') or []
+
+
+def film_refs(film):
+    return film.get('refs') or []
+
+
+def shot_refs(film, shot):
+    """The reference images this shot sends, in order. Order matters: the
+    numbered block in the prompt refers to them by position."""
+    by = {r['id']: r for r in film_refs(film)}
+    return [by[i] for i in (shot.get('refs') or []) if i in by]
+
+
+def refs_block(refs):
+    """The sentence that ties each attached image to what the model should
+    take from it. Appended to the composed prompt for image calls only — no
+    video model on this API accepts reference images."""
+    if not refs:
+        return ''
+    lines = ['Reference images are attached, in this order:']
+    for i, r in enumerate(refs, 1):
+        lines.append('%d. %s' % (i, (r.get('tag') or '').strip() or 'Use this image as a reference.'))
+    return '\n'.join(lines)
+
+
+def ref_path(slug, ref):
+    return os.path.join(film_dir(slug), ref['file'])
 
 
 def shot_styles(film, shot):
@@ -258,13 +291,14 @@ def shot_models(shot, kind):
     return uniq
 
 
-def build_cmd(film, shot, kind, out_path, dry, model, style=None):
+def build_cmd(film, shot, kind, out_path, dry, model, style=None, refs=None):
     """Translate a shot into an gen invocation for one model and one style."""
     spec = shot.get('clip' if kind == 'video' else 'frame', {}) or {}
     content = (spec.get('prompt') or '').strip()
     if not content:
         raise ValueError('the content prompt is empty')
-    prompt = compose((style or {}).get('prompt'), content)
+    refs = refs if kind == 'image' else []
+    prompt = compose_full((style or {}).get('prompt'), content, refs)
     model = (model or '').strip()
     if not model:
         raise ValueError('no model chosen')
@@ -290,6 +324,10 @@ def build_cmd(film, shot, kind, out_path, dry, model, style=None):
         n = int(spec.get('n') or 1)
         if n > 1:
             cmd += ['-n', str(n)]
+        for r in refs or []:
+            p = ref_path(film['slug'], r)
+            if os.path.exists(p):
+                cmd += ['--ref', p]
     if spec.get('extra'):
         cmd += ['--extra', spec['extra'] if isinstance(spec['extra'], str)
                 else json.dumps(spec['extra'])]
@@ -436,8 +474,10 @@ def start_one(film, shot, kind, force_dry, model, style):
     take_id = '-'.join(bits)
     ext = '.mp4' if kind == 'video' else '.png'
     out_path = os.path.join(d, take_id + ext)
-    cmd, prompt, model, spec = build_cmd(film, shot, kind, out_path, dry, model, style)
+    refs = shot_refs(film, shot) if kind == 'image' else []
+    cmd, prompt, model, spec = build_cmd(film, shot, kind, out_path, dry, model, style, refs)
     sidecar = {'kind': kind, 'model': model, 'prompt': prompt,
+               'refs': [{'id': r['id'], 'name': r.get('name'), 'tag': r.get('tag'), 'file': r['file']} for r in refs],
                'style_id': (style or {}).get('id') or None,
                'style_name': (style or {}).get('name') or None,
                'style_prompt': (style or {}).get('prompt') or None,
@@ -608,6 +648,15 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _html(self, text):
+        data = text.encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(data)
+
     def _read(self):
         n = int(self.headers.get('Content-Length') or 0)
         return json.loads((self.rfile.read(n) if n else b'').decode() or '{}')
@@ -618,6 +667,10 @@ class H(BaseHTTPRequestHandler):
         try:
             if path == '/' or path == '/index.html':
                 return self._file(os.path.join(WEB, 'index.html'))
+            if path == '/agent':
+                return self._html(agent_page())
+            if path == '/skill.md':
+                return self._file(os.path.join(HERE, 'skills', 'film-bench', 'SKILL.md'))
             if path.startswith('/web/'):
                 return self._file(os.path.join(WEB, path[5:].lstrip('/')), root=WEB)
             if path.startswith('/media/'):
@@ -635,6 +688,13 @@ class H(BaseHTTPRequestHandler):
                     out[m] = price(m, (qs.get('duration') or ['6'])[0], (qs.get('resolution') or [''])[0],
                                    (qs.get('audio') or ['0'])[0] in ('1', 'true'))
                 return self._json(200, {'floor': out})
+            m = re.fullmatch(r'/api/job/([0-9a-f]+)', path)
+            if m:
+                with JOBS_LOCK:
+                    j = JOBS.get(m.group(1))
+                if not j:
+                    return self._json(404, {'error': 'no such job (the bench keeps jobs in memory; a restart forgets them)'})
+                return self._json(200, {k: v for k, v in j.items() if k != 'lines'} | {'lines': j['lines'][-120:]})
             if path == '/api/costs':
                 return self._json(200, {'models': costs()})
             if path == '/api/spend':
@@ -707,6 +767,10 @@ class H(BaseHTTPRequestHandler):
                 publish('film.changed', {'slug': film['slug']})
                 return self._json(200, {'styles': film['styles']})
 
+            m = re.fullmatch(r'/api/film/([a-z0-9-]+)/refs', path)
+            if m:
+                return self._json(200, save_ref(m.group(1), body))
+
             m = re.fullmatch(r'/api/film/([a-z0-9-]+)/shot/([a-z0-9-]+)/edit', path)
             if m:
                 jobs = start_edit(m.group(1), m.group(2), body)
@@ -737,7 +801,7 @@ class H(BaseHTTPRequestHandler):
                 if not shot:
                     return self._json(404, {'error': 'no such shot'})
                 for k in ('title', 'note', 'first_frame', 'last_frame', 'selected_take',
-                          'styles'):
+                          'styles', 'refs'):
                     if k in body:
                         shot[k] = body[k]
                 for section in ('frame', 'clip'):
@@ -1053,6 +1117,76 @@ def start_edit(slug, shot_id, body):
     return jobs
 
 
+def save_ref(slug, body):
+    """Create, retag or delete a reference image.
+
+    body: {data: dataURL, name, tag}            upload
+          {from_take: {shot, take}, name, tag}  a take becomes a reference
+          {id, name?, tag?}                     rename or retag
+          {id, delete: true}                    remove it and unlink every shot
+    Files live in films/<slug>/refs/; the film lists them in order and shots
+    hold a list of ids, so one image can feed several boards.
+    """
+    film = load_film(slug)
+    film.setdefault('refs', [])
+    rid = re.sub(r'[^a-z0-9-]', '', (body.get('id') or '').lower())
+    if rid:
+        ref = next((r for r in film['refs'] if r['id'] == rid), None)
+        if not ref:
+            raise ValueError('no such reference')
+        if body.get('delete'):
+            film['refs'] = [r for r in film['refs'] if r['id'] != rid]
+            for sh in film['shots']:
+                if sh.get('refs'):
+                    sh['refs'] = [x for x in sh['refs'] if x != rid]
+        else:
+            for k in ('name', 'tag'):
+                if k in body:
+                    ref[k] = body[k]
+        save_film(film)
+        publish('film.changed', {'slug': slug})
+        return {'refs': film['refs']}
+    d = os.path.join(film_dir(slug), 'refs')
+    os.makedirs(d, exist_ok=True)
+    name = (body.get('name') or 'reference').strip()
+    base = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')[:24] or 'ref'
+    rid = '%s-%s' % (base, uuid.uuid4().hex[:4])
+    ft = body.get('from_take')
+    if ft:
+        src = find_take_file(slug, ft.get('shot'), ft.get('take'))
+        if not src:
+            raise ValueError('no such take')
+        if src.endswith('.mp4'):
+            src_png = os.path.join(d, rid + '.png')
+            if not grab_frame(src, float(ft.get('time') or 0), src_png):
+                raise ValueError('could not read a frame out of that clip')
+            rel = os.path.join('refs', rid + '.png')
+        else:
+            rel = os.path.join('refs', rid + os.path.splitext(src)[1])
+            shutil.copyfile(src, os.path.join(film_dir(slug), rel))
+    else:
+        data = body.get('data') or ''
+        m = re.match(r'data:(image/[a-z+]+);base64,(.+)$', data, re.S)
+        if not m:
+            raise ValueError('send an image as a data URL, or from_take')
+        ext = {'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif'}.get(m.group(1), '.png')
+        raw = base64.b64decode(m.group(2))
+        if len(raw) > 25 * 1024 * 1024:
+            raise ValueError('reference images are capped at 25 MB')
+        rel = os.path.join('refs', rid + ext)
+        with open(os.path.join(film_dir(slug), rel), 'wb') as f:
+            f.write(raw)
+    ref = {'id': rid, 'name': name, 'tag': (body.get('tag') or '').strip(), 'file': rel}
+    film['refs'].append(ref)
+    for sid in body.get('link') or []:
+        sh = find_shot(film, sid)
+        if sh and rid not in (sh.get('refs') or []):
+            sh['refs'] = (sh.get('refs') or []) + [rid]
+    save_film(film)
+    publish('film.changed', {'slug': slug})
+    return {'ref': ref, 'refs': film['refs']}
+
+
 def stitch(slug):
     """Concatenate the selected take of every shot, in order, into one film.
 
@@ -1092,12 +1226,78 @@ def stitch(slug):
     return res
 
 
+def agent_page():
+    """One page that writes the agent setup out with the real paths filled in,
+    so it is pasted, not typed. Same idea as the taste library's /me screen:
+    the server hands out the skill, so no consuming repo carries a stale copy."""
+    import html, importlib.util
+    mcp_path = os.path.join(HERE, 'mcp.py')
+    tools = []
+    try:
+        spec = importlib.util.spec_from_file_location('filmbench_mcp', mcp_path)
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        tools = [(n, d) for n, d, _, _ in mod.TOOLS]
+    except Exception as e:                                        # the page still renders
+        tools = [('(could not load mcp.py)', str(e))]
+    port = getattr(H, 'port', 8781)
+    url = 'http://127.0.0.1:%d' % port
+    e = html.escape
+    add_cmd = 'claude mcp add film-bench -- python3 %s' % mcp_path
+    if port != 8781:
+        add_cmd = 'claude mcp add film-bench -e FILMBENCH_URL=%s -- python3 %s' % (url, mcp_path)
+    json_snippet = json.dumps({'mcpServers': {'film-bench': {'command': 'python3', 'args': [mcp_path],
+                               **({'env': {'FILMBENCH_URL': url}} if port != 8781 else {})}}}, indent=2)
+    skill_cmd = 'mkdir -p .claude/skills/film-bench && curl -s %s/skill.md > .claude/skills/film-bench/SKILL.md' % url
+    rows = ''.join('<tr><td><code>%s</code></td><td>%s</td></tr>' % (e(n), e(d)) for n, d in tools)
+    return '''<!doctype html><meta charset="utf-8"><title>film-bench · agent</title>
+<style>
+:root{--bg:#0e0f11;--panel:#16181c;--panel2:#1c1f24;--line:#282c33;--ink:#e6e8ec;--dim:#8b929d;--faint:#5d646e;--acc:#5ad1a0;--blue:#7fb0e0;
+ --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 ui-sans-serif,system-ui,sans-serif}
+main{max-width:860px;margin:0 auto;padding:36px 20px 80px}
+h1{font:600 22px/1.2 var(--mono);margin:0 0 6px}h1 b{color:var(--acc)}
+h2{font:600 11px/1 var(--mono);letter-spacing:.14em;color:var(--faint);margin:34px 0 10px}
+p{color:var(--dim);margin:0 0 10px;max-width:70ch}
+.block{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:8px 0}
+pre{margin:0;font:12.5px/1.6 var(--mono);color:var(--ink);white-space:pre-wrap;word-break:break-all}
+button{position:absolute;right:8px;top:8px;font:11px/1 var(--mono);color:var(--dim);background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:5px 8px;cursor:pointer}
+button:hover{color:var(--ink)}button.ok{color:var(--acc);border-color:#2f5c45}
+table{border-collapse:collapse;width:100%%;font-size:13px}td{padding:7px 8px;border-top:1px solid var(--line);vertical-align:top;color:var(--dim)}
+td:first-child{white-space:nowrap;color:var(--blue);font:12px/1.5 var(--mono)}
+a{color:var(--blue)}.note{border-left:2px solid #4a3b1e;padding-left:12px;color:#c9a267}
+</style>
+<main>
+<h1>film<b>bench</b> · for agents</h1>
+<p>Everything on this page is written out with the real paths of <em>this</em> bench, so it is pasted rather than typed. The bench at <code>%(url)s</code> stays the only writer; the agent talks to it through <code>mcp.py</code>.</p>
+
+<h2>1 · CONNECT CLAUDE CODE</h2>
+<div class="block"><pre id="c1">%(add)s</pre><button data-for="c1">copy</button></div>
+<p>Any other MCP client takes the same server as JSON:</p>
+<div class="block"><pre id="c2">%(json)s</pre><button data-for="c2">copy</button></div>
+
+<h2>2 · GIVE THE AGENT THE SKILL</h2>
+<p>The skill is how the agent works the bench well: stills first, styles separate from content, references with tags, frame before clip, estimate before a fan-out, no arming. Fetch it into the project you are working in; the server hands it out, so it never goes stale in a checkout.</p>
+<div class="block"><pre id="c3">%(skill)s</pre><button data-for="c3">copy</button></div>
+<p><a href="/skill.md">Read the skill</a> · it is <code>skills/film-bench/SKILL.md</code> in this folder.</p>
+
+<h2>3 · WHAT THE AGENT CAN DO</h2>
+<table>%(rows)s</table>
+
+<h2>WHAT IT CANNOT DO</h2>
+<p class="note">Arm the bench. While the bench is disarmed every <code>generate</code> an agent asks for is a dry run: exact request, price, nothing charged. You arm it in the browser when money should move, and <code>generate</code> tells the agent <code>dry_run: true</code> until then.</p>
+</main>
+<script>
+document.querySelectorAll('button').forEach(b=>b.onclick=async()=>{try{await navigator.clipboard.writeText(document.getElementById(b.dataset.for).textContent);b.textContent='copied';b.classList.add('ok');setTimeout(()=>{b.textContent='copy';b.classList.remove('ok')},1400)}catch{b.textContent='select + copy'}});
+</script>''' % {'url': e(url), 'add': e(add_cmd), 'json': e(json_snippet), 'skill': e(skill_cmd), 'rows': rows}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--port', type=int, default=8781)
     ap.add_argument('--bind', default='127.0.0.1')
     args = ap.parse_args()
     os.makedirs(FILMS, exist_ok=True)
+    H.port = args.port
     srv = ThreadingHTTPServer((args.bind, args.port), H)
     srv.daemon_threads = True
     print('film-bench on http://%s:%d' % (args.bind, args.port))

@@ -45,7 +45,8 @@
         "aspect": "16:9",
         "audio": false,
         "seed": null
-      }
+      },
+      "refs": []
     },
     {
       "id": "drift",
@@ -63,7 +64,8 @@
         "models": [
           "google/gemini-3.1-flash-image"
         ],
-        "n": 1
+        "n": 1,
+        "model": null
       },
       "clip": {
         "prompt": "Four seconds. The paper boat drifts slowly away from the camera into the backlight. The ripples widen behind it. The camera holds still.",
@@ -75,7 +77,18 @@
         "aspect": "16:9",
         "audio": false,
         "seed": null
-      }
+      },
+      "refs": [
+        "the-boat-444a"
+      ]
+    }
+  ],
+  "refs": [
+    {
+      "id": "the-boat-444a",
+      "name": "the boat",
+      "tag": "Keep this exact paper boat: its folds, its colour and its size in frame.",
+      "file": "refs/the-boat-444a.png"
     }
   ]
 }

@@ -30,6 +30,7 @@ window.addEventListener('error', e => {
   </div>
   <span class="grow"></span>
   <button id="running" class="pill" hidden>● 0 running</button>
+  <a id="agentLink" class="ghost" href="/agent" target="_blank" title="connect an agent: MCP snippet + the skill, with this bench's paths filled in">agent</a>
   <button id="stylesBtn" class="ghost" title="the looks — one per lane">styles</button>
   <button id="stitch" class="ghost" title="join the picked clip of every shot, in order, into one file">stitch</button>
   <span id="spend" class="chip" title="OpenRouter key usage — click to refresh">…</span>
@@ -57,6 +58,11 @@ window.addEventListener('error', e => {
     <span class="lbl">styles</span>
     <div id="barStyles" class="chips-inline"></div>
     <button id="manageStyles" class="ghost tiny" title="add or edit the looks">+</button>
+    <span class="sep"></span>
+    <span class="lbl" title="reference images this shot sends with every still">refs</span>
+    <div id="barRefs" class="chips-inline"></div>
+    <button id="addRef" class="ghost tiny" title="add reference images (or drop files on the canvas, or paste)">+</button>
+    <input id="refFile" type="file" accept="image/*" multiple hidden>
   </div>
   <div class="bar-row main">
     <textarea id="prompt" rows="2"></textarea>

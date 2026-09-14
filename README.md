@@ -32,6 +32,39 @@ Tools like Recraft get this right: the pictures are the workspace, one bar makes
 
 ![Mid-run: a placeholder card on the board with the live log line](docs/screenshots/placeholder.webp)
 
+## Reference images
+
+Drop image files on the canvas, paste one from the clipboard, press `+` next to **refs** in the bar, or press `→ ref` on any take. Each becomes a node in a row above the boards, with a thumbnail, a name and a tag: the sentence that tells the model what to take from it. "Take the texture of the hull from this image." "Match this lighting." Drag a node onto a board to link it, or toggle it in the bar. A wire runs from every node to every board that sends it, so the graph reads at a glance.
+
+Linked references go with every still the board generates, in the order they are linked, and the composed prompt gets a numbered block that ties each image to its tag:
+
+```
+Reference images are attached, in this order:
+1. Keep this exact paper boat: its folds, its colour and its size in frame.
+```
+
+The dry-run command shows one `--ref` per image, and the take's sidecar records which references it was made from. Clips do not take reference images on this API, so a reference shapes the still, and the still becomes the clip's first frame.
+
+![A reference node wired to the second board, with the composed prompt showing the numbered block](docs/screenshots/references.webp)
+
+## Driving it from an agent
+
+`mcp.py` is an MCP server over stdio. It forwards every call to the running bench's HTTP API, so the bench stays the only writer and disk stays the source of truth. Register it once:
+
+```
+claude mcp add film-bench -- python3 /path/to/film-bench/mcp.py
+```
+
+Or open **agent** in the top bar. That page writes the setup out with this bench's real paths filled in, so it is pasted rather than typed: the `claude mcp add` line, the same server as JSON for any other MCP client, and a curl that fetches the skill into the project you are working in. The bench hands the skill out at `/skill.md`, so no checkout carries a stale copy.
+
+![The agent page: the MCP snippet, the skill, and the tool list, with the real paths filled in](docs/screenshots/agent.webp)
+
+The skill (`skills/film-bench/SKILL.md`) is how an agent works the bench well: check the state first, read the film before touching it, stills before clips, styles separate from content, references with tags, a frame set before any clip, an estimate before a fan-out, and a report at the end that names takes and costs.
+
+The server exposes 18 tools: `bench_status`, `films_list`, `film_get`, `film_create`, `shot_add`, `shot_update`, `shot_delete`, `shots_reorder`, `style_set`, `ref_set`, `generate`, `job_get`, `take_pick`, `frame_set`, `edit`, `stitch`, `models` and `price`. An agent can lay out a film, write the styles, attach references, run stills, promote a frame, generate the clip, edit a take and stitch the cut.
+
+The arm switch is not a tool. While the bench is disarmed, every `generate` an agent asks for is a dry run: the exact request and its price, with nothing charged. A person arms the bench in the browser when money should move, and `generate` returns `dry_run: true` until then, so the agent knows where it stands.
+
 ## Style and content are separate
 
 A shot's prompt says what happens. A style says what it looks like: medium, rendering, lighting, lens, finish. Styles belong to the film and shots subscribe to them. The bench folds the two together at call time and shows the result under `composed`, so the preview is the request that gets sent and not an approximation of it.
@@ -58,7 +91,7 @@ Models that accept a first frame only are marked in the picker, and the bar warn
 
 ## Editing a still
 
-Enlarge a card, paint over an area, and say what should change there. The painted region limits the edit; the rest of the image comes back untouched.
+Enlarge a card, paint over the part to change, and say what should happen there: change this and this, leave the rest. The painted region limits the edit; the rest of the image comes back untouched.
 
 This is not inpainting, because no image model on this API takes a mask. The model receives the clean original and a copy with the painted area burned in as magenta, plus an instruction saying the magenta marks the part to change and must not appear in the result. With nothing painted, the instruction applies to the whole image.
 
@@ -83,7 +116,8 @@ The numbers show up before you press anything (the cost line under the prompt), 
 Disk is the source of truth and the server is its only writer. Every take has a sidecar next to it, so any card on screen can answer what made it, from what prompt, for how much. Every real call also appends a line to `genlog.jsonl`, which is the record the EU AI Act asks for and the data the cost estimates are built from.
 
 ```
-films/<slug>/film.json                  the film: shots, styles, prompts, models, params
+films/<slug>/film.json                  the film: shots, styles, references, prompts, models, params
+films/<slug>/refs/<id>.png              reference images
 films/<slug>/frames/<shot>-first.png    first and last frames
 films/<slug>/takes/<shot>/<take>.mp4    the take
 films/<slug>/takes/<shot>/<take>.json   its sidecar: model, full prompt, params, cost
@@ -93,6 +127,8 @@ genlog.jsonl                            one line per real call, with what it cos
 The canvas adds nothing to the data. Board order is shot order, and where you have panned to is kept in the browser.
 
 ## The key never leaves `bin/gen`
+
+The repo has three moving parts: `bench.py` (the server and the canvas), `bin/gen` (the only thing that talks to OpenRouter) and `mcp.py` (the agent door), plus the skill under `skills/`. None of them needs anything installed beyond Python 3 and ffmpeg.
 
 `bin/gen` is a small CLI over OpenRouter's image and video endpoints, and it is the only process that opens `.env`. The bench spawns it, streams its output to the browser, and parses the cost. Nothing in the server or its logs can leak the key, and `gen` refuses a key file that other users can read.
 
@@ -119,7 +155,7 @@ gen spend                               key usage and what is left
 
 ## Checking that the buttons work
 
-`web/_selftest.html` loads the canvas in an iframe and clicks through 19 steps: boards, the bar, Still / Clip, the model picker, style chips, autosave, arming, card selection, drag onto a slot, the lightbox and its mask, the Styles panel, adding and deleting a shot, board reorder, zoom, stitch. It snapshots the whole film first and puts every shot and style back at the end. Its last line is either `no repairs needed` or a list of what it had to repair, and a repair means a step above did something it should not have.
+`web/_selftest.html` loads the canvas in an iframe and clicks through 20 steps: boards, the bar, Still / Clip, the model picker, style chips, autosave, arming, card selection, drag onto a slot, the lightbox and its mask, the Styles panel, adding and deleting a shot, board reorder, a reference wired to a board, zoom, stitch. It snapshots the whole film first and puts every shot and style back at the end. Its last line is either `no repairs needed` or a list of what it had to repair, and a repair means a step above did something it should not have.
 
 It exists because every control that used `window.prompt` once went dead when Chrome's "prevent this page from creating additional dialogs" was ticked. The page rendered, nothing threw, and no button worked. All dialogs here are in-page, and a script error shows a red banner instead of leaving dead buttons behind.
 

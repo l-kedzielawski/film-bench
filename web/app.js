@@ -129,14 +129,46 @@ async function openFilm(slug, first) {
 const reload = () => S.film && openFilm(S.film.slug);
 
 /* ------------------------------------------------------------- the canvas */
+const REF_W = 210, REF_GAP = 18, REF_H = 250;
 function layout() {
-  $$('#world .board').forEach((b, i) => { b.style.left = (X0 + i * (BW + GAP)) + 'px'; b.style.top = Y0 + 'px'; });
+  const refs = $$('#world .refcard');
+  refs.forEach((r, i) => { r.style.left = (X0 + i * (REF_W + REF_GAP)) + 'px'; r.style.top = Y0 + 'px'; });
+  const top = refs.length ? Y0 + REF_H + 60 : Y0;
+  $$('#world .board').forEach((b, i) => { b.style.left = (X0 + i * (BW + GAP)) + 'px'; b.style.top = top + 'px'; });
+  requestAnimationFrame(drawWires);
 }
+
+/* One wire per (reference, board) link, Comfy style: from the bottom of the
+   node to the top edge of every board that sends it. */
+function drawWires() {
+  const svg = $('#wires'); if (!svg || !S.film) return;
+  svg.innerHTML = '';
+  const byRef = {}; $$('#world .refcard').forEach(n => { byRef[n.dataset.ref] = n; });
+  let maxX = 0, maxY = 0;
+  S.film.shots.forEach(s => {
+    const b = document.querySelector(`.board[data-id="${s.id}"]`); if (!b) return;
+    (s.refs || []).forEach((rid, k) => {
+      const r = byRef[rid]; if (!r) return;
+      const x1 = parseFloat(r.style.left) + r.offsetWidth / 2, y1 = parseFloat(r.style.top) + r.offsetHeight;
+      const x2 = parseFloat(b.style.left) + 26 + k * 18, y2 = parseFloat(b.style.top);
+      const dy = Math.max(30, (y2 - y1) / 2);
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', `M${x1},${y1} C${x1},${y1 + dy} ${x2},${y2 - dy} ${x2},${y2}`);
+      svg.append(p);
+      for (const [x, y] of [[x1, y1], [x2, y2]]) { const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', 3); svg.append(c); }
+      maxX = Math.max(maxX, x1, x2); maxY = Math.max(maxY, y2);
+    });
+  });
+  svg.setAttribute('width', maxX + 100); svg.setAttribute('height', maxY + 100);
+}
+const boardSizes = new ResizeObserver(() => drawWires());
 
 function paintFilm() {
   const w = $('#world'); w.innerHTML = '';
   if (!S.film) return;
-  S.film.shots.forEach((s, i) => w.append(renderBoard(s, i)));
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.id = 'wires'; w.append(svg);
+  (S.film.refs || []).forEach(r => w.append(renderRef(r)));
+  S.film.shots.forEach((s, i) => { const b = renderBoard(s, i); w.append(b); boardSizes.observe(b); });
   const add = el('div', 'board adder'); add.dataset.adder = '1';
   add.append(el('b', null, '+'), el('span', null, S.film.shots.length ? 'add a shot' : 'add the first shot'));
   add.onclick = newShot;
@@ -196,12 +228,85 @@ function renderBoard(s, i) {
   return b;
 }
 
+const refUrl = r => `/media/${S.film.slug}/${r.file}`;
+function refUsers(r) { return S.film.shots.filter(s => (s.refs || []).includes(r.id)); }
+
+function renderRef(r) {
+  const n = el('div', 'refcard'); n.dataset.ref = r.id;
+  const th = el('div', 'rthumb'); const img = el('img'); img.src = refUrl(r); img.alt = r.name || r.id;
+  th.append(img, el('span', 'kind', 'REF')); th.title = 'drag onto a board to link it';
+  n.append(th);
+  const name = el('input', 'rname'); name.value = r.name || ''; name.placeholder = 'name';
+  n.append(name);
+  const tag = el('textarea', 'rtag'); tag.rows = 2; tag.value = r.tag || '';
+  tag.placeholder = 'What to take from it. "Take the texture of the hull from this image." "Match this lighting." It goes into the prompt, numbered.';
+  n.append(tag);
+  requestAnimationFrame(() => autosize(tag));
+  const foot = el('div', 'rfoot');
+  const used = el('span'); const paintUsed = () => { const u = refUsers(r); used.textContent = u.length ? `→ ${u.length} shot${u.length === 1 ? '' : 's'}` : 'not linked — drag onto a board'; };
+  paintUsed();
+  const saved = el('span', 'saved', 'saved');
+  const del = el('button', 'ghost', '✕'); del.title = 'remove this reference and unlink it everywhere';
+  del.onclick = async e => {
+    e.stopPropagation();
+    const u = refUsers(r);
+    if (!await confirmIn(`Remove reference "${r.name || r.id}"?` + (u.length ? `\n\n${u.length} shot(s) send it and will stop.` : ''))) return;
+    await api('POST', `/api/film/${S.film.slug}/refs`, { id: r.id, delete: true }); await reload();
+  };
+  del.onpointerdown = e => e.stopPropagation();
+  foot.append(used, el('span', 'grow'), saved, del);
+  n.append(foot);
+  let t = null;
+  const save = () => {
+    clearTimeout(t);
+    t = setTimeout(async () => {
+      r.name = name.value; r.tag = tag.value;
+      await api('POST', `/api/film/${S.film.slug}/refs`, { id: r.id, name: name.value, tag: tag.value });
+      saved.classList.add('show'); setTimeout(() => saved.classList.remove('show'), 1200);
+      paintBarRefs();
+    }, 450);
+  };
+  name.oninput = save; tag.oninput = () => { autosize(tag); save(); };
+  return n;
+}
+
+/* Upload: files dropped on the canvas, pasted, or picked with +. Each becomes a
+   node; dropped on a board, it is linked to that board straight away. */
+async function addRefFiles(files, linkTo) {
+  if (!S.film) { toast('Create or pick a film first', true); return; }
+  const list = [...files].filter(f => f.type.startsWith('image/'));
+  if (!list.length) { toast('Drop image files.', true); return; }
+  let lastId = null;
+  for (const f of list) {
+    const data = await new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(f); });
+    try {
+      const r = await api('POST', `/api/film/${S.film.slug}/refs`, { data, name: f.name.replace(/\.[^.]+$/, ''), tag: '', link: linkTo ? [linkTo] : [] });
+      lastId = r.ref.id;
+    } catch (e) { toast(e.message, true); }
+  }
+  await reload();
+  if (lastId) { const ta = document.querySelector(`.refcard[data-ref="${lastId}"] .rtag`); if (ta) ta.focus(); }
+  toast(`${list.length} reference${list.length === 1 ? '' : 's'} added` + (linkTo ? ' and linked' : ' — drag onto a board to link, and say what to take from it'));
+}
+
+async function toggleRef(s, rid) {
+  const next = new Set(s.refs || []);
+  next.has(rid) ? next.delete(rid) : next.add(rid);
+  s.refs = [...next];
+  await api('POST', `/api/film/${S.film.slug}/shot/${s.id}`, { refs: s.refs });
+  paintBarRefs(); drawWires();
+  $$('#world .refcard').forEach(n => { const r = (S.film.refs || []).find(x => x.id === n.dataset.ref); if (r) { const u = refUsers(r); n.querySelector('.rfoot span').textContent = u.length ? `→ ${u.length} shot${u.length === 1 ? '' : 's'}` : 'not linked — drag onto a board'; } });
+  const meta = document.querySelector(`.board[data-id="${s.id}"] .bmeta`); if (meta) paintBoardMeta(meta, s);
+}
+
 function paintBoardMeta(node, s) {
   node.innerHTML = '';
   const n = s.takes.length;
   node.append(document.createTextNode(`${n} take${n === 1 ? '' : 's'}`));
   const cut = takeById(s, s.selected_take);
   if (cut) { node.append(document.createTextNode(' · ')); node.append(el('span', 'cut', '★ ' + short(cut.model))); }
+  const nr = (s.refs || []).length;
+  if (nr) node.append(document.createTextNode(` · ${nr} ref${nr === 1 ? '' : 's'}`));
 }
 
 function renderCard(s, t) {
@@ -245,6 +350,12 @@ function takeActions(s, t, media) {
       } });
   }
   acts.push({ label: 'edit', title: 'enlarge, paint a region, say what to change', run: () => openLightbox(s, t) });
+  acts.push({ label: '→ ref', title: 'turn this take into a reference image for other shots',
+    run: async () => {
+      const body = { from_take: { shot: s.id, take: t.id, time: isV && media ? media.currentTime : 0 }, name: `${short(t.model)}${t.style_name && t.style_name !== 'edit' ? ' · ' + t.style_name : ''}`, tag: 'Match this image.' };
+      await api('POST', `/api/film/${S.film.slug}/refs`, body); await reload();
+      toast('added as a reference — drag it onto a board, and say what to take from it');
+    } });
   if (t.style_name !== 'edit') acts.push({ label: 'again', title: `run the current ${isV ? 'clip' : 'still'} prompt on ${short(t.model)}${t.style_name ? ' · ' + t.style_name : ''} once more`,
     run: () => generate('generate', isV ? 'clip' : 'frame', s, [t.model], t.style_id ? [t.style_id] : []) });
   if (isV) acts.push({ label: 'chain →', title: 'pick this take and push its last frame into the next shot as first frame',
@@ -381,7 +492,7 @@ function zoomAt(cx, cy, factor) {
 }
 function canvasCenter() { const r = $('#canvas').getBoundingClientRect(); return [r.width / 2, r.height / 2 - 60]; }
 function fit() {
-  const boards = $$('#world .board'); if (!boards.length) return;
+  const boards = $$('#world .board, #world .refcard'); if (!boards.length) return;
   let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
   boards.forEach(b => {
     const l = parseFloat(b.style.left), t = parseFloat(b.style.top);
@@ -417,6 +528,12 @@ function centerOn(id) {
     const t = e.target;
     const board = t.closest('.board');
     if (board && board.dataset.id) setActive(board.dataset.id);
+    const refNode = t.closest('.refcard');
+    if (refNode) {
+      if (!t.closest('.rthumb')) return;                       // name / tag / buttons: leave them alone
+      start = { kind: 'ref', x: e.clientX, y: e.clientY, node: refNode, moved: false };
+      capture(cv, e); e.preventDefault(); return;
+    }
     const card = t.closest('.card');
     if (card && !card.classList.contains('ghost') && !t.closest('.ctools')) {
       start = { kind: 'card', x: e.clientX, y: e.clientY, card, moved: false };
@@ -448,6 +565,18 @@ function centerOn(id) {
       const slot = under && under.closest('.slot');
       $$('.slot.over').forEach(s => { if (s !== slot) s.classList.remove('over'); });
       if (slot) slot.classList.add('over');
+      return;
+    }
+    if (start.kind === 'ref') {
+      if (!start.moved) {
+        start.moved = true; start.node.classList.add('lifting');
+        const g = $('#dragGhost'); g.style.backgroundImage = `url("${start.node.querySelector('img').src}")`; g.hidden = false;
+      }
+      const g = $('#dragGhost'); g.style.left = (e.clientX + 14) + 'px'; g.style.top = (e.clientY + 14) + 'px';
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      const board = under && under.closest('.board:not(.adder)');
+      $$('.board.dropref').forEach(b => { if (b !== board) b.classList.remove('dropref'); });
+      if (board) board.classList.add('dropref');
       return;
     }
     if (start.kind === 'board') {
@@ -496,6 +625,15 @@ function centerOn(id) {
         if (t.ext === '.mp4') { const v = st.card.querySelector('video'); body.time = slot.dataset.slot === 'last' && v && isFinite(v.duration) ? Math.max(0, v.duration - 0.05) : (v ? v.currentTime : 0); }
         try { await api('POST', `/api/film/${S.film.slug}/shot/${s.id}/promote`, body); toast(`${slot.dataset.slot} frame set`); await reload(); }
         catch (err) { toast(err.message, true); }
+      }
+      return;
+    }
+    if (st.kind === 'ref') {
+      $('#dragGhost').hidden = true; st.node.classList.remove('lifting');
+      const board = $$('.board.dropref')[0]; $$('.board.dropref').forEach(b => b.classList.remove('dropref'));
+      if (st.moved && board) {
+        const s = S.film.shots.find(x => x.id === board.dataset.id);
+        if (s) { await toggleRef(s, st.node.dataset.ref); toast((s.refs || []).includes(st.node.dataset.ref) ? `linked to ${s.title || s.id}` : `unlinked from ${s.title || s.id}`); }
       }
       return;
     }
@@ -552,7 +690,22 @@ function paintBar() {
   } else ta.value = '';
   ta.disabled = !s;
   autosize(ta);
-  paintBarStyles(); paintBarModels(); paintCost(); paintGenLabel();
+  paintBarStyles(); paintBarRefs(); paintBarModels(); paintCost(); paintGenLabel();
+}
+
+function paintBarRefs() {
+  const box = $('#barRefs'); if (!box) return; box.innerHTML = '';
+  const s = shot(); const refs = (S.film && S.film.refs) || [];
+  if (!refs.length) { box.append(el('span', 'hint', 'none — drop images on the canvas, or press +')); return; }
+  const set = new Set((s && s.refs) || []);
+  refs.forEach(r => {
+    const c = el('div', 'chip-m rf' + (set.has(r.id) ? ' on' : ''));
+    const img = el('img'); img.src = refUrl(r); c.append(img, el('span', null, r.name || r.id));
+    c.title = (r.tag || '(no tag yet — say what to take from it)') + (S.mode === 'clip' ? '\n\nReferences go with stills only; no video model on this API takes them. Ground the clip in a still instead.' : '');
+    c.onclick = () => { if (s) toggleRef(s, r.id); };
+    box.append(c);
+  });
+  if (S.mode === 'clip') box.append(el('span', 'hint', 'stills only'));
 }
 
 function paintBarStyles() {
@@ -655,11 +808,13 @@ function openComposed(anchor) {
   const picked = styles().filter(st => (s.styles || []).includes(st.id));
   const content = $('#prompt').value;
   const pre = el('pre', 'pop-composed');
-  if (!picked.length) pre.textContent = content.trim() || '(empty)';
+  const refs = S.mode === 'frame' ? ((S.film.refs || []).filter(r => (s.refs || []).includes(r.id))) : [];
+  const block = refs.length ? '\n\nReference images are attached, in this order:\n' + refs.map((r, i) => `${i + 1}. ${(r.tag || '').trim() || 'Use this image as a reference.'}`).join('\n') : '';
+  if (!picked.length) pre.textContent = (content.trim() || '(empty)') + block;
   else picked.forEach((st, i) => {
     if (i) pre.append(document.createTextNode('\n\n'));
     pre.append(el('b', null, `── ${st.name || st.id} ──\n`));
-    pre.append(document.createTextNode(composeWith(st.prompt, content)));
+    pre.append(document.createTextNode(composeWith(st.prompt, content) + block));
   });
   const wrap = el('div'); wrap.append(el('div', 'pop-head', 'COMPOSED — WHAT ACTUALLY GETS SENT'), pre);
   openPop(anchor, wrap, { above: true, wide: true });
@@ -880,6 +1035,12 @@ function paintTake() {
     const fr = el('div', 'tk-frames');
     for (const f of [t.first_frame, t.last_frame]) { if (!f) continue; const i = el('img'); i.src = `/media/${S.film.slug}/${f}`; i.title = f; fr.append(i); }
     d.append(fr); body.append(d);
+  }
+  if (t.refs && t.refs.length) {
+    const d = el('div', 'sec'); d.append(el('h4', null, 'REFERENCES SENT'));
+    const box = el('div', 'tk-refs');
+    t.refs.forEach((r, i) => { const row = el('div'); const im = el('img'); im.src = `/media/${S.film.slug}/${r.file}`; const tx = el('span'); tx.append(el('b', null, `${i + 1}. ${r.name || r.id}`), document.createTextNode(r.tag || '')); row.append(im, tx); box.append(row); });
+    d.append(box); body.append(d);
   }
   if (t.edit_of) sec('EDIT OF', t.edit_of + (t.masked ? '  (region-marked)' : ''), null, true);
   sec('FILE', (t.file || '').replace('/media/', 'films/'), null, true);
@@ -1186,6 +1347,24 @@ $('#running').onclick = () => openSide('activity');
 $('#stylesBtn').onclick = () => S.side.open && S.side.tab === 'styles' ? closeSide() : openSide('styles');
 $('#manageStyles').onclick = () => styles().length ? openSide('styles') : newStyle();
 $('#addStyle').onclick = newStyle;
+$('#addRef').onclick = () => $('#refFile').click();
+$('#refFile').onchange = async e => { await addRefFiles(e.target.files, S.shotId); e.target.value = ''; };
+(function dropzone() {
+  const cv = $('#canvas');
+  cv.addEventListener('dragover', e => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); cv.classList.add('dropping'); } });
+  cv.addEventListener('dragleave', e => { if (e.target === cv) cv.classList.remove('dropping'); });
+  cv.addEventListener('drop', async e => {
+    if (![...e.dataTransfer.types].includes('Files')) return;
+    e.preventDefault(); cv.classList.remove('dropping');
+    const board = e.target.closest && e.target.closest('.board:not(.adder)');
+    await addRefFiles(e.dataTransfer.files, board ? board.dataset.id : null);
+  });
+  document.addEventListener('paste', e => {
+    if (typing()) return;
+    const files = [...(e.clipboardData && e.clipboardData.items || [])].filter(i => i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
+    if (files.length) { e.preventDefault(); addRefFiles(files, S.shotId); }
+  });
+})();
 $('#sideClose').onclick = closeSide;
 $$('.stab').forEach(b => { b.onclick = () => openSide(b.dataset.t); });
 $('#clearJobs').onclick = () => { [...S.jobs.values()].filter(j => j.state !== 'running').forEach(j => S.jobs.delete(j.id)); paintJobs(); paintGhosts(); paintRunning(); };

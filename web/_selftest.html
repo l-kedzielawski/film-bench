@@ -21,6 +21,7 @@ document.getElementById('f').onload = async () => {
   const strip = s => { const o = JSON.parse(JSON.stringify(s)); delete o.takes; return o; };
   const saved = before.shots.map(s => ({ id: s.id, clip: s.clip.models, frame: s.frame.models, styles: s.styles, fprompt: s.frame.prompt, cprompt: s.clip.prompt, order: before.shots.map(x => x.id), full: strip(s) }));
   const savedStyles = JSON.parse(JSON.stringify(before.styles || []));
+  const savedRefs = JSON.parse(JSON.stringify(before.refs || []));
   const T = async (name, fn) => { try { log.push(name + ': ' + await fn()); } catch (e) { log.push(name + ': THREW ' + e.message); } };
   // dispatch on whatever is really under the point — a real pointer does
   const ptr = (_t, type, x, y, extra) => (d.elementFromPoint(x, y) || q('#canvas')).dispatchEvent(new win.PointerEvent(type, Object.assign({ bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, button: 0, isPrimary: true, pointerType: 'mouse' }, extra || {})));
@@ -77,14 +78,16 @@ document.getElementById('f').onload = async () => {
     return 'asked=' + asked + ' armed=' + q('#arm').dataset.armed + ' genLabel="' + q('#gen').textContent + '"';
   });
   await T('clicking a card selects it and opens the Take panel', async () => {
+    q('#fit').click(); await wait(120);   // the still card may sit off-screen at 100%
     const c = qa('.card:not(.ghost)').find(x => x.querySelector('.kind') && x.querySelector('.kind').textContent === 'STILL') || q('.card:not(.ghost)'); const [x, y] = center(c.querySelector('.thumb'));
     ptr(q('#canvas'), 'pointerdown', x, y); ptr(q('#canvas'), 'pointerup', x, y); await wait(300);
     return 'sel=' + c.classList.contains('sel') + ' side=' + !q('#side').hidden + ' tab=' + (qa('.stab.on')[0] || {}).dataset?.t + ' sections=' + qa('#takePane .sec').length + ' acts=' + qa('#takePane .tk-acts button').length;
   });
   await T('card toolbar is present', async () => qa('.card.sel .ctools button').map(b => b.textContent).join(' | '));
+  const repaint = async () => { q('#filmPick').dispatchEvent(new win.Event('change')); await wait(700); };
   const closeAll = async () => { for (let i = 0; i < 3; i++) { d.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(60); } };
   await T('drag a still onto the LAST slot promotes it', async () => {
-    await closeAll();   // the Take panel would otherwise cover the slot
+    await closeAll(); q('#fit').click(); await wait(120);   // the Take panel would otherwise cover the slot
     const c = qa('.card:not(.ghost)').find(x => x.querySelector('.kind') && x.querySelector('.kind').textContent === 'STILL') || q('.card:not(.ghost)'); const [x, y] = center(c.querySelector('.thumb'));
     const own = c.dataset.shot; const s0 = (await get()).shots.find(x => x.id === own);
     const slot = q(`.board[data-id="${own}"] .slot[data-slot="last"]`); const [sx, sy] = center(slot);
@@ -97,6 +100,7 @@ document.getElementById('f').onload = async () => {
   });
   await T('double-click opens the lightbox with a 1:1 mask canvas', async () => {
     // two quick taps through the real pointer path — a synthetic dblclick on the card would bypass the canvas capture
+    await closeAll(); q('#fit').click(); await wait(120);
     const c = qa('.card:not(.ghost)').find(x => x.querySelector('.kind') && x.querySelector('.kind').textContent === 'STILL') || q('.card:not(.ghost)'); const [cx, cy] = center(c.querySelector('.thumb'));
     for (let i = 0; i < 2; i++) { ptr(null, 'pointerdown', cx, cy); ptr(null, 'pointerup', cx, cy); await wait(80); }
     await wait(800);
@@ -170,6 +174,27 @@ document.getElementById('f').onload = async () => {
     await wait(100);
     return 'changed=' + (t0 !== q('#world').style.transform) + ' pct=' + q('#zoomPct').textContent;
   });
+  await T('reference: from a take, wired to a board, chip toggles, removed again', async () => {
+    const film = await get();
+    const src = film.shots.map(s => ({ s, t: s.takes.find(t => t.ext !== '.mp4') })).find(x => x.t);
+    if (!src) return 'no still to make a reference from';
+    const n0 = qa('.refcard').length, w0 = qa('#wires path').length;
+    const r = await (await post(`/api/film/${FILM}/refs`, { from_take: { shot: src.s.id, take: src.t.id }, name: 'selftest ref', tag: 'Take the texture from this image.', link: [src.s.id] })).json();
+    await repaint();
+    const n1 = qa('.refcard').length, w1 = qa('#wires path').length;
+    // the bar chip for the active shot toggles the link
+    const chip = qa('#barRefs .chip-m').find(c => c.textContent.includes('selftest ref'));
+    let toggled = 'no chip';
+    if (chip) { const was = chip.classList.contains('on'); chip.click(); await wait(500); const now = qa('#barRefs .chip-m').find(c => c.textContent.includes('selftest ref')).classList.contains('on'); toggled = was + '->' + now; qa('#barRefs .chip-m').find(c => c.textContent.includes('selftest ref')).click(); await wait(500); }
+    // the composed preview carries the numbered block for the linked shot
+    d.querySelector(`.board[data-id="${src.s.id}"] .slots`).dispatchEvent(new win.PointerEvent('pointerdown', { bubbles: true, clientX: 0, clientY: 0, pointerId: 1, button: 0 }));
+    d.querySelector('#canvas').dispatchEvent(new win.PointerEvent('pointerup', { bubbles: true, clientX: 0, clientY: 0, pointerId: 1, button: 0 })); await wait(150);
+    q('#composedBtn').click(); await wait(200);
+    const block = ((q('#pop .pop-composed') || {}).textContent || '').includes('Reference images are attached');
+    q('#composedBtn').click(); await wait(100);
+    await post(`/api/film/${FILM}/refs`, { id: r.ref.id, delete: true }); await repaint();
+    return `nodes ${n0}->${n1}->${qa('.refcard').length} · wires ${w0}->${w1}->${qa('#wires path').length} · chip ${toggled} · composedBlock=${block}`;
+  });
   await T('zoom controls + fit change the transform', async () => {
     const t0 = q('#world').style.transform; q('#zoomIn').click(); await wait(50);
     const t1 = q('#world').style.transform; q('#fit').click(); await wait(50);
@@ -185,13 +210,16 @@ document.getElementById('f').onload = async () => {
   for (const st of cur.styles) if (!savedStyles.some(x => x.id === st.id)) { repairs.push('style ' + st.id + ' was extra'); await post(`/api/film/${FILM}/styles`, { id: st.id, delete: true }); }
   for (const st of savedStyles) await post(`/api/film/${FILM}/styles`, { id: st.id, name: st.name, prompt: st.prompt, note: st.note || '' });
   cur = await get();
+  for (const r of cur.refs || []) if (!savedRefs.some(x => x.id === r.id)) { repairs.push('ref ' + r.id + ' was extra'); await post(`/api/film/${FILM}/refs`, { id: r.id, delete: true }); }
+  cur = await get();
   for (const s of saved) if (!cur.shots.some(x => x.id === s.id)) { repairs.push('shot ' + s.id + ' was missing'); await post(`/api/film/${FILM}/shots`, { id: s.id, title: s.full.title }); }
   for (const x of cur.shots) if (!saved.some(s => s.id === x.id)) { repairs.push('shot ' + x.id + ' was extra'); await post(`/api/film/${FILM}/shot/${x.id}/delete`); }
-  for (const s of saved) { const f = s.full; await post(`/api/film/${FILM}/shot/${s.id}`, { title: f.title, note: f.note, first_frame: f.first_frame, last_frame: f.last_frame, selected_take: f.selected_take, styles: f.styles, clip: f.clip, frame: f.frame }); }
+  for (const s of saved) { const f = s.full; const body = { title: f.title, note: f.note, first_frame: f.first_frame, last_frame: f.last_frame, selected_take: f.selected_take, styles: f.styles, clip: f.clip, frame: f.frame }; if ('refs' in f) body.refs = f.refs; await post(`/api/film/${FILM}/shot/${s.id}`, body); }
   await post(`/api/film/${FILM}/reorder`, { order: saved.map(s => s.id) });
   const after = await get();
   const same = JSON.stringify(after.shots.map(strip)) === JSON.stringify(saved.map(s => s.full))
-            && JSON.stringify(after.styles) === JSON.stringify(savedStyles);
+            && JSON.stringify(after.styles) === JSON.stringify(savedStyles)
+            && JSON.stringify(after.refs || []) === JSON.stringify(savedRefs);
   log.push('film restored: ' + same + ' · shots ' + after.shots.map(s => s.id).join(',') + ' · styles ' + after.styles.map(s => s.id).join(','));
   log.push(repairs.length ? 'REPAIRS NEEDED (a step above misbehaved): ' + repairs.join('; ') : 'no repairs needed');
   document.getElementById('out').textContent = log.join('\n');
