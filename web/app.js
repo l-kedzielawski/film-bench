@@ -70,8 +70,10 @@ const S = {
   mode: 'frame',                               // 'frame' (still) | 'clip' — stills first, on purpose
   cat: { video: [], image: [] }, filter: '', showAll: false,
   view: { x: 60, y: 60, z: 1 }, side: { open: false, tab: 'take' },
-  styleId: null, lb: null, drag: null, space: false
+  styleId: null, lb: null, drag: null, space: false,
+  fold: 'full'                                 // 'full' | 'compact' | 'folded' — see foldBar()
 };
+try { S.fold = localStorage.getItem('fb.fold') || 'full'; } catch {}
 const KIND = { clip: 'video', frame: 'image' };
 S.costs = {};              // per model: what it has actually billed (from /api/costs)
 S.batches = [];            // fan-outs in flight, so a finished dry run can be summed
@@ -90,12 +92,11 @@ async function boot() {
   loadCosts();
   fillModels();
 
-  const pick = $('#filmPick'); pick.innerHTML = '';
-  st.films.forEach(f => { const o = el('option', null, `${f.title}  (${f.shots})`); o.value = f.slug; pick.append(o); });
+  paintFilmList(st.films);
   const want = location.hash.slice(1) || (st.films[0] && st.films[0].slug);
   $('#canvasEmpty').hidden = !!want;
-  if (want) { pick.value = want; await openFilm(want, true); }
-  paintJobs(); paintRunning();
+  if (want) { $('#filmPick').value = want; await openFilm(want, true); }
+  paintJobs(); paintRunning(); paintFold();
   listen();
 }
 
@@ -112,11 +113,86 @@ async function fillModels() {
 }
 
 /* ------------------------------------------------------------------- film */
+function paintFilmList(films, want) {
+  const pick = $('#filmPick'); pick.innerHTML = '';
+  (films || []).forEach(f => { const o = el('option', null, `${f.title}  (${f.shots})`); o.value = f.slug; pick.append(o); });
+  if (want) pick.value = want;
+  pick.disabled = !(films || []).length;   // the ⋯ menu stays live: it always offers "new film"
+  if (!(films || []).length) { const o = el('option', null, 'no films yet'); o.value = ''; pick.append(o); }
+}
+const refreshFilms = async () => paintFilmList((await api('GET', '/api/state')).films, S.film && S.film.slug);
+
+async function newFilm() {
+  const title = await ask('Name for the new film', '');
+  if (!title) return;
+  const slug = slugify(title, 48) || 'film-' + Date.now().toString(36);
+  try {
+    await api('POST', '/api/films', { slug, title });
+    S.shotId = null; S.sel = null;
+    await openFilm(slug, true);
+    await refreshFilms();
+    toast(`film "${title}" created — add a shot`);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function renameFilm() {
+  if (!S.film) return;
+  const title = await ask('Name for this film', S.film.title || S.film.slug);
+  if (!title) return;
+  await api('POST', `/api/film/${S.film.slug}`, { title });
+  S.film.title = title;
+  await refreshFilms();
+}
+
+/* A film is every take ever generated for it, which is real money. Ask for the
+   name, and the server moves it to films/_trash rather than deleting it. */
+async function deleteFilm() {
+  if (!S.film) return;
+  const f = S.film;
+  const takes = f.shots.reduce((a, sh) => a + (sh.takes || []).length, 0);
+  const typed = await ask(
+    `Delete the film "${f.title}"?\n\n${f.shots.length} shot(s) and ${takes} take(s) move to films/_trash — they are not gone, but nothing regenerates for free.\n\nType the film name to confirm.`, '');
+  if (typed == null) return;
+  const want = [(f.title || '').trim().toLowerCase(), f.slug];
+  if (!want.includes(typed.trim().toLowerCase())) { toast('name did not match — nothing was deleted', true); return; }
+  try {
+    const r = await api('POST', `/api/film/${f.slug}/delete`);
+    toast(`"${f.title}" moved to ${r.trash}`);
+    const st = await api('GET', '/api/state');
+    paintFilmList(st.films);
+    if (st.films[0]) { S.shotId = null; S.sel = null; $('#filmPick').value = st.films[0].slug; await openFilm(st.films[0].slug, true); }
+    else closeFilm();
+  } catch (e) { toast(e.message, true); }
+}
+
+function closeFilm() {
+  S.film = null; S.shotId = null; S.sel = null;
+  location.hash = '';
+  closeSide(); paintFilm(); paintBar();
+  $('#canvasEmpty').hidden = false;
+}
+
+function filmMenu(anchor) {
+  const m = el('div', 'menu');
+  const add = (label, fn, cls) => { const b = el('button', cls || '', label); b.onclick = async () => { closePop(); try { await fn(); } catch (e) { toast(e.message, true); } }; m.append(b); };
+  add('new film   (shift + N)', newFilm);
+  if (S.film) {
+    add('rename this film', renameFilm);
+    m.append(el('hr'));
+    add(freeMode() ? 'tidy every node back into a row' : 'place nodes freely', () => freeMode() ? tidyLayout() : startFree());
+    m.append(el('hr'));
+    add('delete this film…', deleteFilm, 'danger');
+  }
+  openPop(anchor, m, { below: true });
+}
+
 async function openFilm(slug, first) {
   S.film = await api('GET', `/api/film/${slug}`);
   location.hash = slug;
   if (!S.film.shots.some(s => s.id === S.shotId)) S.shotId = S.film.shots[0] ? S.film.shots[0].id : null;
   if (S.sel && !takeById(shot(), S.sel)) S.sel = null;
+  $('#canvasEmpty').hidden = true;
+  $('#filmPick').disabled = false;
   paintFilm();
   if (first) {
     // Open readable: the first board at 100%, top-left. `fit` is one key away.
@@ -125,17 +201,89 @@ async function openFilm(slug, first) {
     applyView();
   }
   paintBar(); paintSide();
+  clampToCaps().catch(() => {});   // the shot open on load may already be out of bounds
 }
 const reload = () => S.film && openFilm(S.film.slug);
 
 /* ------------------------------------------------------------- the canvas */
 const REF_W = 210, REF_GAP = 18, REF_H = 250;
+/* Two layouts in one function. By default nodes sit in film order, left to
+   right, and nothing is stored. Once a node carries an x/y — you dragged one
+   off the row, or pressed "place nodes freely" — that node stays where it was
+   put and only the ones without a position keep taking row slots. Film order
+   is never the geometry: it is the order of S.film.shots, shown on the badge. */
+const freeMode = () => !!(S.film && (S.film.shots.some(s => s.x != null) || (S.film.refs || []).some(r => r.x != null)));
+const refById = id => (S.film.refs || []).find(r => r.id === id);
+
 function layout() {
+  if (!S.film) return;
   const refs = $$('#world .refcard');
-  refs.forEach((r, i) => { r.style.left = (X0 + i * (REF_W + REF_GAP)) + 'px'; r.style.top = Y0 + 'px'; });
+  let ri = 0;
+  for (const r of refs) {
+    const o = refById(r.dataset.ref);
+    if (o && o.x != null) { r.style.left = o.x + 'px'; r.style.top = o.y + 'px'; }
+    else { r.style.left = (X0 + ri++ * (REF_W + REF_GAP)) + 'px'; r.style.top = Y0 + 'px'; }
+  }
   const top = refs.length ? Y0 + REF_H + 60 : Y0;
-  $$('#world .board').forEach((b, i) => { b.style.left = (X0 + i * (BW + GAP)) + 'px'; b.style.top = top + 'px'; });
+  let slot = 0, right = X0;
+  for (const b of $$('#world .board:not(.adder)')) {
+    const o = S.film.shots.find(x => x.id === b.dataset.id);
+    const x = o && o.x != null ? o.x : X0 + slot++ * (BW + GAP);
+    const y = o && o.x != null ? o.y : top;
+    b.style.left = x + 'px'; b.style.top = y + 'px';
+    right = Math.max(right, x + BW + GAP);
+  }
+  const add = $('#world .board.adder');
+  if (add) { add.style.left = right + 'px'; add.style.top = top + 'px'; }
   requestAnimationFrame(drawWires);
+}
+
+/* Read every node's position off the canvas and onto the film. The one place
+   free placement is written, so a drag, a "place freely" and a reload all end
+   up saying the same thing. */
+function captureLayout() {
+  const out = { shots: {}, refs: {} };
+  $$('#world .board:not(.adder)').forEach(b => {
+    const o = S.film.shots.find(x => x.id === b.dataset.id); if (!o) return;
+    o.x = Math.round(parseFloat(b.style.left) || 0); o.y = Math.round(parseFloat(b.style.top) || 0);
+    out.shots[o.id] = [o.x, o.y];
+  });
+  $$('#world .refcard').forEach(n => {
+    const o = refById(n.dataset.ref); if (!o) return;
+    o.x = Math.round(parseFloat(n.style.left) || 0); o.y = Math.round(parseFloat(n.style.top) || 0);
+    out.refs[o.id] = [o.x, o.y];
+  });
+  return out;
+}
+const saveLayout = () => api('POST', `/api/film/${S.film.slug}/layout`, captureLayout());
+
+async function startFree() {
+  await saveLayout();
+  toast('free placement on — drag a node by its head, the number badge is still the film order');
+}
+
+async function tidyLayout() {
+  await api('POST', `/api/film/${S.film.slug}/layout`, { reset: true });
+  S.film.shots.concat(S.film.refs || []).forEach(n => { delete n.x; delete n.y; });
+  layout();
+  toast('nodes tidied back into film order');
+}
+
+async function moveShot(s, d) {
+  const ids = S.film.shots.map(x => x.id);
+  const i = ids.indexOf(s.id), j = i + d;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  ids.splice(j, 0, ids.splice(i, 1)[0]);
+  await api('POST', `/api/film/${S.film.slug}/reorder`, { order: ids });
+  await reload();
+}
+
+function stepShot(d) {
+  if (!S.film || !S.film.shots.length) return;
+  const ids = S.film.shots.map(s => s.id);
+  let i = ids.indexOf(S.shotId);
+  i = i < 0 ? 0 : Math.max(0, Math.min(ids.length - 1, i + d));
+  setActive(ids[i]); centerOn(ids[i]);
 }
 
 /* One wire per (reference, board) link, Comfy style: from the bottom of the
@@ -189,7 +337,9 @@ function renderBoard(s, i) {
   const meta = el('span', 'bmeta'); paintBoardMeta(meta, s); head.append(meta);
   const menu = el('button', 'ghost tiny', '⋯'); menu.title = 'shot menu';
   menu.onclick = e => { e.stopPropagation(); boardMenu(menu, s); };
-  head.append(menu);
+  const del = el('button', 'ghost tiny bdel', '✕'); del.title = 'delete this shot   (Del)';
+  del.onclick = e => { e.stopPropagation(); deleteShot(s).catch(err => toast(err.message, true)); };
+  head.append(menu, del);
   b.append(head);
 
   const note = el('textarea', 'bnote'); note.rows = 1; note.value = s.note || '';
@@ -243,6 +393,8 @@ function renderRef(r) {
   n.append(tag);
   requestAnimationFrame(() => autosize(tag));
   const foot = el('div', 'rfoot');
+  const grip = el('span', 'grip', '⠿'); grip.title = 'drag to move this node';
+  foot.append(grip);
   const used = el('span'); const paintUsed = () => { const u = refUsers(r); used.textContent = u.length ? `→ ${u.length} shot${u.length === 1 ? '' : 's'}` : 'not linked — drag onto a board'; };
   paintUsed();
   const saved = el('span', 'saved', 'saved');
@@ -420,15 +572,26 @@ function boardMenu(anchor, s) {
   const m = el('div', 'menu');
   const add = (label, fn, cls) => { const b = el('button', cls || '', label); b.onclick = async () => { closePop(); try { await fn(); } catch (e) { toast(e.message, true); } }; m.append(b); };
   add('centre on this shot', () => centerOn(s.id));
-  add('duplicate shot', () => duplicateShot(s));
+  add('duplicate shot   (D)', () => duplicateShot(s));
   m.append(el('hr'));
-  add('delete shot', async () => {
-    if (!await confirmIn(`Delete shot "${s.title || s.id}"?\n\nIts takes stay on disk.`)) return;
-    await api('POST', `/api/film/${S.film.slug}/shot/${s.id}/delete`);
-    if (S.shotId === s.id) { S.shotId = null; S.sel = null; }
-    await reload();
-  }, 'danger');
+  add('move earlier   (alt + ←)', () => moveShot(s, -1));
+  add('move later   (alt + →)', () => moveShot(s, 1));
+  add(freeMode() ? 'tidy every node back into a row' : 'place nodes freely', () => freeMode() ? tidyLayout() : startFree());
+  m.append(el('hr'));
+  add('delete shot   (Del)', () => deleteShot(s), 'danger');
   openPop(anchor, m, { below: true });
+}
+
+/* One deletion path, three ways in: the ✕ on the head, the menu, and Del. */
+async function deleteShot(s) {
+  if (!S.film) return;
+  const n = (s.takes || []).length;
+  if (!await confirmIn(`Delete shot "${s.title || s.id}"?` +
+      (n ? `\n\nIts ${n} take${n === 1 ? '' : 's'} stay on disk, under films/${S.film.slug}/takes/.` : ''))) return;
+  await api('POST', `/api/film/${S.film.slug}/shot/${s.id}/delete`);
+  if (S.shotId === s.id) { S.shotId = null; S.sel = null; }
+  await reload();
+  toast(`shot "${s.title || s.id}" deleted`);
 }
 
 async function duplicateShot(s) {
@@ -437,6 +600,7 @@ async function duplicateShot(s) {
   const made = await api('POST', `/api/film/${S.film.slug}/shots`, { id, title: (s.title || s.id) + ' copy' });
   const clip = Object.assign({}, s.clip), frame = Object.assign({}, s.frame);
   await api('POST', `/api/film/${S.film.slug}/shot/${made.id}`, { note: s.note || '', styles: s.styles || [], clip, frame });
+  if (freeMode() && s.x != null) await api('POST', `/api/film/${S.film.slug}/layout`, { shots: { [made.id]: [s.x + 60, s.y + 60] } });
   S.shotId = made.id; S.sel = null;
   await reload(); centerOn(made.id);
 }
@@ -445,8 +609,13 @@ async function newShot() {
   if (!S.film) { toast('Create or pick a film first', true); return; }
   const title = await ask('What happens in this shot?', '');
   if (!title) return;
+  // In free placement the row slot is meaningless — put the new node where the
+  // + card the user just pressed is sitting.
+  const add = $('#world .board.adder');
+  const at = freeMode() && add ? [Math.round(parseFloat(add.style.left)), Math.round(parseFloat(add.style.top))] : null;
   try {
     const s = await api('POST', `/api/film/${S.film.slug}/shots`, { id: slugify(title, 40), title });
+    if (at) await api('POST', `/api/film/${S.film.slug}/layout`, { shots: { [s.id]: at } });
     S.shotId = s.id; S.sel = null;
     await reload(); centerOn(s.id);
     $('#prompt').focus();
@@ -459,6 +628,7 @@ function setActive(id) {
   $$('#world .board').forEach(b => b.classList.toggle('on', b.dataset.id === id));
   $$('#world .card.sel').forEach(c => c.classList.remove('sel'));
   paintBar();
+  clampToCaps().catch(() => {});   // this shot may carry settings its model refuses
   if (S.side.open && S.side.tab === 'take') paintSide();
 }
 
@@ -530,6 +700,11 @@ function centerOn(id) {
     if (board && board.dataset.id) setActive(board.dataset.id);
     const refNode = t.closest('.refcard');
     if (refNode) {
+      if (t.closest('.grip')) {                                // the grip moves the node itself
+        start = { kind: 'node', x: e.clientX, y: e.clientY, node: refNode, moved: false,
+                  left: parseFloat(refNode.style.left), top: parseFloat(refNode.style.top) };
+        capture(cv, e); e.preventDefault(); return;
+      }
       if (!t.closest('.rthumb')) return;                       // name / tag / buttons: leave them alone
       start = { kind: 'ref', x: e.clientX, y: e.clientY, node: refNode, moved: false };
       capture(cv, e); e.preventDefault(); return;
@@ -540,7 +715,8 @@ function centerOn(id) {
       capture(cv, e); e.preventDefault(); return;
     }
     if (t.closest('.bhead') && !isControl(t) && board) {
-      start = { kind: 'board', x: e.clientX, y: e.clientY, board, left: parseFloat(board.style.left), moved: false };
+      start = { kind: 'board', x: e.clientX, y: e.clientY, board, moved: false,
+                left: parseFloat(board.style.left), top: parseFloat(board.style.top) };
       capture(cv, e); e.preventDefault(); return;
     }
     if (isControl(t) || t.closest('.adder') || t.closest('.slot')) return;
@@ -567,6 +743,13 @@ function centerOn(id) {
       if (slot) slot.classList.add('over');
       return;
     }
+    if (start.kind === 'node') {
+      if (!start.moved) { start.moved = true; start.node.classList.add('lifting'); }
+      start.node.style.left = (start.left + dx / S.view.z) + 'px';
+      start.node.style.top = (start.top + dy / S.view.z) + 'px';
+      requestAnimationFrame(drawWires);
+      return;
+    }
     if (start.kind === 'ref') {
       if (!start.moved) {
         start.moved = true; start.node.classList.add('lifting');
@@ -581,6 +764,20 @@ function centerOn(id) {
     }
     if (start.kind === 'board') {
       if (!start.moved) { start.moved = true; start.board.classList.add('lifting'); }
+      // Along the row a drag reorders, as it always has. A deliberate pull
+      // downwards breaks the film out into free placement, and from then on a
+      // drag just moves the node — order stays on the number badge.
+      if (!start.free && (freeMode() || Math.abs(dy / S.view.z) > 46)) {
+        start.becameFree = !freeMode();
+        captureLayout();
+        start.free = true;
+      }
+      if (start.free) {
+        start.board.style.left = (start.left + dx / S.view.z) + 'px';
+        start.board.style.top = (start.top + dy / S.view.z) + 'px';
+        requestAnimationFrame(drawWires);
+        return;
+      }
       start.board.style.left = (start.left + dx / S.view.z) + 'px';
       // slide the others out of the way as the lifted one passes their centres
       const others = $$('#world .board').filter(b => b !== start.board && !b.classList.contains('adder'));
@@ -628,6 +825,13 @@ function centerOn(id) {
       }
       return;
     }
+    if (st.kind === 'node') {
+      st.node.classList.remove('lifting');
+      if (!st.moved) return;
+      try { await saveLayout(); } catch (err) { toast(err.message, true); }
+      layout();
+      return;
+    }
     if (st.kind === 'ref') {
       $('#dragGhost').hidden = true; st.node.classList.remove('lifting');
       const board = $$('.board.dropref')[0]; $$('.board.dropref').forEach(b => b.classList.remove('dropref'));
@@ -640,6 +844,13 @@ function centerOn(id) {
     if (st.kind === 'board') {
       st.board.classList.remove('lifting');
       if (!st.moved) { layout(); return; }
+      if (st.free) {
+        try {
+          await saveLayout();
+          if (st.becameFree) toast('free placement on — order is the number badge (alt + ← →); “tidy” in the ⋯ menu puts the row back');
+        } catch (err) { toast(err.message, true); }
+        layout(); return;
+      }
       const others = S.film.shots.map(s => s.id).filter(id => id !== st.board.dataset.id);
       others.splice(st.idx, 0, st.board.dataset.id);
       layout();
@@ -652,7 +863,23 @@ function centerOn(id) {
   cv.addEventListener('pointerup', finish);
   cv.addEventListener('pointercancel', finish);
 
+  /* A long note inside a board used to be unreachable: the canvas swallowed
+     every wheel event to pan, so nothing on a node could ever scroll. Give the
+     wheel to a scrollable thing under the pointer, and pan with what's left. */
+  const scrollableUnder = (node, dy) => {
+    for (let n = node; n && n !== document.body; n = n.parentElement) {
+      if (n.id === 'canvas' || n.id === 'world') break;
+      const oy = getComputedStyle(n).overflowY;
+      if (oy !== 'auto' && oy !== 'scroll') continue;
+      const room = n.scrollHeight - n.clientHeight;
+      if (room < 2) continue;
+      if (dy < 0 ? n.scrollTop > 0 : n.scrollTop < room - 1) return true;
+    }
+    return false;
+  };
+
   cv.addEventListener('wheel', e => {
+    if (!e.ctrlKey && !e.metaKey && e.deltaY && scrollableUnder(e.target, e.deltaY)) return;
     e.preventDefault();
     const r = cv.getBoundingClientRect();
     if (e.ctrlKey || e.metaKey) zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0022));
@@ -690,7 +917,80 @@ function paintBar() {
   } else ta.value = '';
   ta.disabled = !s;
   autosize(ta);
-  paintBarStyles(); paintBarRefs(); paintBarModels(); paintCost(); paintGenLabel();
+  paintBarStyles(); paintBarRefs(); paintBarModels(); paintFrameCaps(); paintCost(); paintGenLabel();
+  paintFold();
+}
+
+/* Folding the bar. Three steps down, because the two things in the way are not
+   the same thing: the styles / refs / models rows are settings you set once,
+   the prompt is what you are working in.
+
+     full     everything
+     compact  settings rows folded away — prompt, Generate and the summary
+     folded   one strip: what it will do, and the button that does it
+
+   The settings stay in force when folded, and Generate still spends real money
+   on them, so every folded step keeps a summary of what is set and what it will
+   cost. Folding must never hide a charge. */
+/* Two directional buttons, not one cycling one: going back a step should not
+   mean pressing forward three more times. Both clamp at the ends. */
+const FOLDS = ['full', 'compact', 'folded', 'gone'];
+const FOLD_DOWN = {
+  full: 'fold the styles, refs and model rows away   (B)',
+  compact: 'fold the prompt away too   (B)',
+  folded: 'hide the bar completely   (B)',
+  gone: '',
+};
+const FOLD_UP = {
+  full: '',
+  compact: 'bring the styles, refs and model rows back   (shift + B)',
+  folded: 'bring the prompt back   (shift + B)',
+  gone: 'show the bar again   (shift + B)',
+};
+function paintFold() {
+  const bar = $('#bar');
+  bar.classList.toggle('compact', S.fold === 'compact');
+  bar.classList.toggle('folded', S.fold === 'folded');
+  bar.classList.toggle('gone', S.fold === 'gone');
+  $('#barShow').hidden = S.fold !== 'gone';
+  $('#barShow').title = 'show the prompt bar   (B)';
+  const i = FOLDS.indexOf(S.fold);
+  const down = $('#barFold'), up = $('#barUnfold');
+  down.disabled = i >= FOLDS.length - 1;
+  up.disabled = i <= 0;
+  down.title = FOLD_DOWN[S.fold];
+  up.title = FOLD_UP[S.fold];
+  paintBarSummary();
+}
+function foldBar(step) {
+  setFold(FOLDS[Math.max(0, Math.min(FOLDS.length - 1, FOLDS.indexOf(S.fold) + (step || 1)))]);
+}
+function setFold(to) {
+  if (to === S.fold) return;
+  S.fold = to;
+  try { localStorage.setItem('fb.fold', S.fold); } catch {}
+  paintFold();
+  if (S.fold === 'full' || S.fold === 'compact') autosize($('#prompt'));
+}
+const showBar = () => { if (S.fold === 'gone' || S.fold === 'folded') setFold('full'); };
+
+function paintBarSummary() {
+  const out = $('#barSummary');
+  if (S.fold === 'full' || S.fold === 'gone') { out.textContent = ''; return; }
+  const s = shot();
+  if (!s) { out.textContent = 'no shot'; out.title = ''; return; }
+  const spec = s[sect()] || {}, n = chosen().length, st = (s.styles || []).length, rf = (s.refs || []).length;
+  const bits = [`${n} model${n === 1 ? '' : 's'}`];
+  if (st) bits.push(`${st} style${st === 1 ? '' : 's'}`);   // a zero is noise on one line
+  if (S.mode === 'frame' && rf) bits.push(`${rf} ref${rf === 1 ? '' : 's'}`);
+  bits.push(S.mode === 'clip'
+    ? `${spec.duration ?? 6}s · ${spec.resolution || '720p'} · ${spec.aspect || '16:9'}`
+    : `n ${spec.n ?? 1}`);
+  const cost = $('#cost').textContent;
+  if (cost) bits.push(cost);
+  out.textContent = '· ' + bits.join('  ·  ');
+  const prompt = (S.mode === 'clip' ? spec.prompt : spec.prompt) || '';
+  out.title = S.fold === 'folded' && prompt ? 'prompt: ' + prompt.slice(0, 400) : 'what this bar will send — the folded rows are still in force';
 }
 
 function paintBarRefs() {
@@ -740,6 +1040,7 @@ async function setModels(list) {
   s[sc] = Object.assign({}, s[sc], { models: list }); delete s[sc].model;
   paintBarModels(); paintCost();
   await api('POST', `/api/film/${S.film.slug}/shot/${s.id}`, { [sc]: { models: list, model: null } });
+  await clampToCaps().catch(() => {});
 }
 function paintBarModels() {
   const box = $('#barModels'); box.innerHTML = '';
@@ -822,9 +1123,17 @@ function openComposed(anchor) {
 
 function paintCost() {
   const out = $('#cost'), warn = $('#warn'); warn.hidden = true;
+  setTimeout(paintBarSummary, 0);            // the summary quotes this line back
   const s = shot(); if (!s) { out.textContent = ''; return; }
   const list = chosen(), kind = KIND[sect()];
   if (!list.length) { out.textContent = 'no model selected'; return; }
+  if (kind === 'image') {
+    const caps = capsFor(list), used = (s.refs || []).length;
+    if (caps.refs !== Infinity && used > caps.refs) {
+      warn.hidden = false;
+      warn.textContent = `This shot sends ${used} references, but ${list.map(short).join(', ')} accept${list.length === 1 ? 's' : ''} at most ${caps.refs}. The call will be refused.`;
+    }
+  }
   const nS = Math.max(1, (s.styles || []).length);
   if (kind === 'image') {
     // no list prices for images — what each model has billed before, per still
@@ -893,7 +1202,14 @@ function paintGenLabel() {
   b.title = S.armed ? 'charged against the key  (⌘/Ctrl+Enter)' : 'DISARMED — prints the exact request and cost, charges nothing. Arm in the top bar to spend.  (⌘/Ctrl+Enter)';
 }
 
-function autosize(ta) { ta.style.height = 'auto'; ta.style.height = Math.min(220, ta.scrollHeight + 2) + 'px'; }
+function autosize(ta) {
+  ta.style.height = 'auto';
+  const want = ta.scrollHeight + 2, cap = 220;
+  ta.style.height = Math.min(cap, want) + 'px';
+  // Past the cap the box stops growing — so let it scroll, or the rest of the
+  // text is simply unreachable.
+  ta.style.overflowY = want > cap ? 'auto' : 'hidden';
+}
 
 /* saving — debounced per shot, patches only what changed */
 const saveTimers = new Map();
@@ -910,6 +1226,85 @@ function queueSave(s, patch) {
     } catch (e) { toast('save failed: ' + e.message, true); }
   }, 500) });
 }
+/* ------------------------------------------------- what a model will accept */
+/* The catalogue publishes real limits per model: how many images in one call,
+   which resolutions and aspect ratios, how many references. Two of this
+   morning's failures were 400s for asking a model to do something it says
+   plainly it cannot. So the bar offers only what the picked models accept, and
+   anything already stored outside those limits is pulled back inside before it
+   can be spent on. A parameter only one model of several understands is not
+   offered at all — it would be sent to the others too. */
+const limitsOf = id => {
+  const m = (S.cat[KIND[sect()]] || []).find(x => x.id === id);
+  return (m && m.limits) || {};
+};
+function capsFor(list) {
+  const caps = { n: Infinity, refs: Infinity, resolution: null, aspect_ratio: null, unknown: 0 };
+  if (!list.length) return caps;
+  for (const id of list) {
+    const l = limitsOf(id);
+    if (!Object.keys(l).length) { caps.unknown++; continue; }
+    if (l.n) caps.n = Math.min(caps.n, l.n[1] || 1);
+    if (l.input_references) caps.refs = Math.min(caps.refs, l.input_references[1] ?? Infinity);
+    for (const key of ['resolution', 'aspect_ratio']) {
+      if (!l[key]) { caps[key] = []; continue; }              // this one cannot take it: offer nothing
+      if (caps[key] === null) caps[key] = l[key].slice();
+      else caps[key] = caps[key].filter(v => l[key].includes(v));
+    }
+  }
+  if (caps.unknown === list.length) { caps.n = Infinity; caps.refs = Infinity; }
+  return caps;
+}
+
+function paintFrameCaps() {
+  if (S.mode !== 'frame') return;
+  const s = shot(), caps = capsFor(chosen());
+  const nBox = $('#frameN');
+  const nMax = caps.n === Infinity ? 4 : Math.max(1, caps.n);
+  nBox.max = nMax;
+  nBox.disabled = nMax === 1;
+  nBox.title = nMax === 1
+    ? 'the picked model makes one image per call — press Generate again for another candidate'
+    : `up to ${nMax} in one call`;
+  if (Number(nBox.value) > nMax) nBox.value = nMax;
+
+  for (const [key, sel, wrap, label] of [
+    ['resolution', '#frameResolution', '#frameResWrap', 'resolution'],
+    ['aspect_ratio', '#frameAspect', '#frameAspectWrap', 'aspect'],
+  ]) {
+    const values = caps[key] === null ? [] : caps[key];
+    $(wrap).hidden = !values.length;
+    const box = $(sel);
+    const want = s ? (key === 'resolution' ? s.frame && s.frame.resolution : s.frame && s.frame.aspect) : '';
+    box.innerHTML = '';
+    const none = el('option', null, '—'); none.value = ''; box.append(none);
+    values.forEach(v => { const o = el('option', null, v); o.value = v; box.append(o); });
+    box.value = values.includes(want) ? want : '';
+    box.title = values.length ? `${label}: what every picked model accepts` : '';
+  }
+}
+
+/* Enforce, don't just display: a value stored outside the limits is written back
+   inside them, once, with a line saying so. Silently sending it costs money. */
+async function clampToCaps() {
+  const s = shot(); if (!s || S.mode !== 'frame') return;
+  const caps = capsFor(chosen()), patch = {};
+  const n = Number(s.frame && s.frame.n) || 1;
+  if (caps.n !== Infinity && n > caps.n) patch.n = caps.n;
+  for (const [key, field] of [['resolution', 'resolution'], ['aspect_ratio', 'aspect']]) {
+    const have = s.frame && s.frame[field];
+    if (!have) continue;
+    const values = caps[key];
+    if (values !== null && !values.includes(have)) patch[field] = null;
+  }
+  if (!Object.keys(patch).length) return;
+  s.frame = Object.assign({}, s.frame, patch);
+  await api('POST', `/api/film/${S.film.slug}/shot/${s.id}`, { frame: patch });
+  const said = Object.entries(patch).map(([k, v]) => v === null ? `${k} cleared` : `${k} → ${v}`);
+  toast(`${short(chosen()[0] || '')} will not take that: ${said.join(', ')}`, true);
+  paintBar();
+}
+
 function barPatch() {
   const s = shot(); if (!s) return;
   const num = v => v === '' ? null : Number(v);
@@ -918,7 +1313,8 @@ function barPatch() {
       aspect: $('#clipAspect').value.trim(), seed: num($('#clipSeed').value), audio: $('#clipAudio').checked };
     s.clip = Object.assign({}, s.clip, clip); queueSave(s, { clip });
   } else {
-    const frame = { prompt: $('#prompt').value, n: num($('#frameN').value) || 1 };
+    const frame = { prompt: $('#prompt').value, n: num($('#frameN').value) || 1,
+      resolution: $('#frameResolution').value || null, aspect: $('#frameAspect').value || null };
     s.frame = Object.assign({}, s.frame, frame); queueSave(s, { frame });
   }
 }
@@ -1207,6 +1603,7 @@ function listen() {
       api('GET', '/api/state').then(st => paintSpend(st.spend)).catch(() => {});
     }
     else if (event === 'film.changed') { if (S.film && payload.slug === S.film.slug) reload(); }
+    else if (event === 'films.changed') { refreshFilms().catch(() => {}); }
     else if (event === 'armed') { S.armed = payload.armed; paintArm(); }
   };
   es.onerror = () => { /* EventSource reconnects on its own */ };
@@ -1315,30 +1712,74 @@ document.addEventListener('keydown', e => {
   }
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); generate('generate'); return; }
   if (typing() || S.lb) return;
-  if (e.key === 'f' || e.key === 'F') fit();
-  if (e.key === '1') { S.mode = 'frame'; paintBar(); }
-  if (e.key === '2') { S.mode = 'clip'; paintBar(); }
-  if ((e.key === 'Delete' || e.key === 'Backspace') && S.sel) {
-    const s = shot(), t = takeById(s, S.sel); if (!t) return;
-    takeActions(s, t).find(a => a.cls === 'x').run().catch(err => toast(err.message, true));
+  const oops = err => toast(err.message, true);
+  if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    const s = shot(); if (s) { e.preventDefault(); moveShot(s, e.key === 'ArrowLeft' ? -1 : 1).catch(oops); }
+    return;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); stepShot(e.key === 'ArrowLeft' ? -1 : 1); return; }
+  if (e.key === '?') { e.preventDefault(); openHelp($('#help')); return; }
+  if (e.key === '/') { e.preventDefault(); showBar(); $('#prompt').focus(); return; }
+  if (e.key === 'f' || e.key === 'F') { fit(); return; }
+  if (e.key === 'n') { newShot(); return; }
+  if (e.key === 'N') { newFilm(); return; }
+  if (e.key === 'b') { S.fold === 'gone' ? setFold('full') : foldBar(1); return; }
+  if (e.key === 'B') { foldBar(-1); return; }
+  if (e.key === 'd' || e.key === 'D') { const s = shot(); if (s) duplicateShot(s).catch(oops); return; }
+  if (e.key === 's' || e.key === 'S') { S.side.open && S.side.tab === 'styles' ? closeSide() : openSide('styles'); return; }
+  if (e.key === 'l' || e.key === 'L') { S.side.open && S.side.tab === 'activity' ? closeSide() : openSide('activity'); return; }
+  if (e.key === '1') { S.mode = 'frame'; paintBar(); return; }
+  if (e.key === '2') { S.mode = 'clip'; paintBar(); return; }
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault();
+    const s = shot(); if (!s) return;
+    const t = S.sel && takeById(s, S.sel);
+    if (t) { takeActions(s, t).find(a => a.cls === 'x').run().catch(oops); return; }
+    deleteShot(s).catch(oops);                 // nothing selected: the shot itself
   }
 });
+
+/* ------------------------------------------------------------------- help */
+const SHORTCUTS = [
+  ['n', 'new shot'],
+  ['shift + N', 'new film'],
+  ['D', 'duplicate the active shot'],
+  ['B', 'fold the bar a step: full → compact → strip → hidden'],
+  ['shift + B', 'unfold a step'],
+  ['Del  ⌫', 'delete the selected take — or the active shot, when no take is selected'],
+  ['←  →', 'previous / next shot'],
+  ['alt + ←  →', 'move the active shot earlier / later in the film'],
+  ['1  2', 'still / clip'],
+  ['/', 'jump into the prompt'],
+  ['⌘ / ctrl + ⏎', 'Generate'],
+  ['F', 'fit the whole film'],
+  ['ctrl + wheel', 'zoom — space-drag or middle-drag pans'],
+  ['S', 'styles panel'],
+  ['L', 'activity log'],
+  ['Esc', 'close: take, popover, panel, lightbox'],
+  ['?', 'this list'],
+];
+function openHelp(anchor) {
+  const d = el('div', 'keys');
+  d.append(el('h4', null, 'Keyboard'));
+  for (const [k, what] of SHORTCUTS) {
+    const row = el('div', 'krow'); row.append(el('kbd', null, k), el('span', null, what)); d.append(row);
+  }
+  d.append(el('h4', null, 'Arranging nodes'));
+  const p = el('p', 'hint');
+  p.textContent = 'Drag a board by its head. Along the row that reorders the film; pull one down and the film switches to free placement, where a drag just moves the node and the number badge stays the film order. References move by the ⠿ grip. “tidy every node back into a row” in either ⋯ menu undoes the lot.';
+  d.append(p);
+  openPop(anchor, d, { below: true, wide: true });
+}
 document.addEventListener('keyup', e => { if (e.key === ' ') { S.space = false; $('#canvas').classList.remove('spacing'); } });
 $('#ask').addEventListener('pointerdown', e => { if (e.target.id === 'ask') $('#askNo').click(); });
 
 /* ----------------------------------------------------------------- wiring */
 $('#filmPick').onchange = e => { S.shotId = null; S.sel = null; openFilm(e.target.value, true); };
-$('#newFilm').onclick = async () => {
-  const title = await ask('Name for the new film', '');
-  if (!title) return;
-  const slug = slugify(title, 48) || 'film-' + Date.now().toString(36);
-  try {
-    await api('POST', '/api/films', { slug, title });
-    const o = el('option', null, title); o.value = slug; $('#filmPick').append(o); $('#filmPick').value = slug;
-    S.shotId = null; S.sel = null; $('#canvasEmpty').hidden = true;
-    await openFilm(slug, true); toast(`film "${title}" created — add a shot`);
-  } catch (e) { toast(e.message, true); }
-};
+$('#newFilm').onclick = newFilm;
+$('#filmMenu').onclick = () => $('#pop').hidden || $('#pop').dataset.anchor !== 'filmMenu' ? filmMenu($('#filmMenu')) : closePop();
+$('#help').onclick = () => $('#pop').hidden || $('#pop').dataset.anchor !== 'help' ? openHelp($('#help')) : closePop();
 $('#zoomIn').onclick = () => { const [x, y] = canvasCenter(); zoomAt(x, y, 1.25); };
 $('#zoomOut').onclick = () => { const [x, y] = canvasCenter(); zoomAt(x, y, 0.8); };
 $('#zoomPct').onclick = () => { const [x, y] = canvasCenter(); zoomAt(x, y, 1 / S.view.z); };
@@ -1387,10 +1828,14 @@ $('#stitch').onclick = async () => {
   } catch (e) { toast(e.message, true); }
   btn.disabled = false; btn.textContent = 'stitch';
 };
+$('#barFold').onclick = () => foldBar(1);
+$('#barUnfold').onclick = () => foldBar(-1);
+$('#barShow').onclick = () => setFold('full');
 $('#target').onclick = () => { if (S.shotId) centerOn(S.shotId); };
 $$('.mode').forEach(b => { b.onclick = () => { S.mode = b.dataset.mode; paintBar(); $('#prompt').focus(); }; });
 $('#prompt').oninput = () => { autosize($('#prompt')); barPatch(); };
-['#clipDuration', '#clipResolution', '#clipAspect', '#clipSeed', '#clipAudio', '#frameN'].forEach(sel => { $(sel).oninput = () => { barPatch(); paintCost(); }; });
+['#clipDuration', '#clipResolution', '#clipAspect', '#clipSeed', '#clipAudio',
+ '#frameN', '#frameResolution', '#frameAspect'].forEach(sel => { $(sel).oninput = () => { barPatch(); paintCost(); }; });
 $('#pickModels').onclick = () => $('#pop').hidden || $('#pop').dataset.anchor !== 'pickModels' ? openModelPicker($('#pickModels')) : closePop();
 $('#composedBtn').onclick = () => $('#pop').hidden || $('#pop').dataset.anchor !== 'composedBtn' ? openComposed($('#composedBtn')) : closePop();
 $('#gen').onclick = () => generate('generate');

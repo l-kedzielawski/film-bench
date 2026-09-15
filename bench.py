@@ -61,8 +61,9 @@ SLUG = re.compile(r'[a-z0-9][a-z0-9-]{0,63}$')
 # 2026). Order is the order they appear in the picker; everything else follows.
 PICKS_IMAGE = [
     'google/gemini-3.1-flash-image',      # cheap, fast, takes a reference image — the iteration workhorse
-    'bytedance-seed/seedream-5-0-pro',
-    'openai/gpt-image-2.5-sunburst',
+    'bytedance-seed/seedream-4.5',        # ~9s image-to-image — 5-0-pro cannot finish inside the 60s cut
+    'openai/gpt-image-2.5-flare',         # speed tier of GPT Image 2.5; streams, so the cut cannot bite
+    'openai/gpt-image-2.5-sunburst',      # precision tier of the same, same parameters and rates
     'google/gemini-3-pro-image',
     'black-forest-labs/flux.2-pro',
     'qwen/qwen-image-3-pro',
@@ -324,6 +325,10 @@ def build_cmd(film, shot, kind, out_path, dry, model, style=None, refs=None):
         n = int(spec.get('n') or 1)
         if n > 1:
             cmd += ['-n', str(n)]
+        if spec.get('resolution'):
+            cmd += ['--resolution', str(spec['resolution'])]
+        if spec.get('aspect'):
+            cmd += ['--aspect', str(spec['aspect'])]
         for r in refs or []:
             p = ref_path(film['slug'], r)
             if os.path.exists(p):
@@ -588,6 +593,36 @@ def spend():
     return data
 
 
+def model_limits(kind):
+    """What each model will actually accept — n range, resolutions, aspects, how
+    many references. Published by the catalogue and otherwise thrown away, which
+    is why an n of 2 on a model capped at 1 could only be discovered by paying
+    for the 400."""
+    try:
+        r = subprocess.run([sys.executable, GEN, 'models', kind, '--json'], cwd=PROJECT,
+                           capture_output=True, text=True, timeout=60,
+                           env={**os.environ, **GEN_ENV})
+        out = {}
+        for m in json.loads(r.stdout or '[]'):
+            sp = m.get('supported_parameters') or {}
+            lim = {}
+            for key in ('n', 'input_references'):
+                rng = sp.get(key)
+                if isinstance(rng, dict) and rng.get('type') == 'range':
+                    lim[key] = [rng.get('min', 1), rng.get('max')]
+            for key in ('resolution', 'aspect_ratio'):
+                enum = sp.get(key)
+                if isinstance(enum, dict) and enum.get('values'):
+                    lim[key] = enum['values']
+            if m.get('supports_streaming') is not None:
+                lim['streaming'] = bool(m['supports_streaming'])
+            if lim:
+                out[m['id']] = lim
+        return out
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return {}
+
+
 def models(kind):
     hit = MODELS.get(kind)
     if hit and time.time() - hit[0] < 3600:
@@ -608,15 +643,17 @@ def models(kind):
                              'frames': fm.group(1).split(',') if fm else []})
     except (OSError, subprocess.SubprocessError):
         pass
+    limits = model_limits(kind)
     picks = PICKS_VIDEO if kind == 'video' else PICKS_IMAGE
     have = {r['id'] for r in rows}
     for r in rows:
         r['pick'] = r['id'] in picks
+        r['limits'] = limits.get(r['id']) or {}
     # picked models first, in the order above; everything else alphabetical after
     rows.sort(key=lambda r: (picks.index(r['id']) if r['id'] in picks else 999, r['id']))
     for missing in [p for p in picks if p not in have]:
         rows.insert(0, {'id': missing, 'note': '(not in the live catalogue)', 'price': None,
-                        'frames': [], 'pick': True, 'gone': True})
+                        'frames': [], 'pick': True, 'gone': True, 'limits': {}})
     MODELS[kind] = (time.time(), rows)
     return rows
 
@@ -806,7 +843,13 @@ class H(BaseHTTPRequestHandler):
                         shot[k] = body[k]
                 for section in ('frame', 'clip'):
                     if section in body and isinstance(body[section], dict):
-                        shot.setdefault(section, {}).update(body[section])
+                        sec = shot.setdefault(section, {})
+                        sec.update(body[section])
+                        # null is how the bar clears an optional parameter; keep
+                        # it out of the file rather than storing "no value" twice
+                        for key in ('resolution', 'aspect'):
+                            if key in sec and sec[key] is None:
+                                sec.pop(key)
                 save_film(film)
                 return self._json(200, shot)
 
@@ -882,6 +925,42 @@ class H(BaseHTTPRequestHandler):
             m = re.fullmatch(r'/api/film/([a-z0-9-]+)/stitch', path)
             if m:
                 return self._json(200, stitch(m.group(1)))
+
+            m = re.fullmatch(r'/api/film/([a-z0-9-]+)/layout', path)
+            if m:
+                # Where the nodes sit on the canvas. Purely presentation: film
+                # order stays the order of film['shots'], which is what stitch
+                # and the number badges use. No publish() — a drag must not
+                # bounce a full reload back at the browser doing the dragging.
+                film = load_film(m.group(1))
+                if body.get('reset'):
+                    for node in film['shots'] + film.get('refs', []):
+                        node.pop('x', None)
+                        node.pop('y', None)
+                else:
+                    for key, nodes in (('shots', film['shots']), ('refs', film.get('refs', []))):
+                        want = body.get(key) or {}
+                        for node in nodes:
+                            xy = want.get(node['id'])
+                            if xy:
+                                node['x'], node['y'] = int(round(float(xy[0]))), int(round(float(xy[1])))
+                save_film(film)
+                return self._json(200, {'ok': True, 'free': any('x' in n for n in film['shots'])})
+
+            m = re.fullmatch(r'/api/film/([a-z0-9-]+)/delete', path)
+            if m:
+                slug = m.group(1)
+                src = film_dir(slug)
+                if not os.path.isdir(src):
+                    return self._json(404, {'error': 'no such film'})
+                # Not rm -rf: a film carries every take ever generated for it,
+                # which is real money. Move it aside and say where it went.
+                trash = os.path.join(FILMS, '_trash')
+                os.makedirs(trash, exist_ok=True)
+                dest = os.path.join(trash, '%s-%s' % (slug, time.strftime('%Y%m%d-%H%M%S')))
+                os.rename(src, dest)
+                publish('films.changed', {'slug': slug, 'deleted': True})
+                return self._json(200, {'ok': True, 'trash': os.path.relpath(dest, HERE)})
 
             m = re.fullmatch(r'/api/film/([a-z0-9-]+)/shot/([a-z0-9-]+)/delete', path)
             if m:

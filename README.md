@@ -20,7 +20,9 @@ Tools like Recraft get this right: the pictures are the workspace, one bar makes
 
 ## How it works
 
-**Boards are shots, left to right in film order.** Drag a board by its head to move it. The order is saved, because the order of the boards is the cut. The dashed board at the end adds a shot.
+**Boards are shots, left to right in film order.** Drag a board by its head along the row to reorder it. The order is saved, because the order of the boards is the cut. The dashed board at the end adds a shot, `✕` on a head deletes one, and `⋯` carries centre, duplicate, move earlier or later, and free placement.
+
+**Arrange the nodes however you like.** Pull a board *downwards* off the row and the film switches to free placement: from then on a drag just moves the node wherever you want it, reference nodes move by the `⠿` grip in their footer, and positions are saved per node so the arrangement survives a reload. Film order never depends on where a node sits — it stays the number badge on the head, changed with `alt` + `←` `→`. *Tidy every node back into a row* in either `⋯` menu throws the positions away.
 
 **Cards are takes, newest first.** Hover a clip and it plays. Click a card and a toolbar appears on it: pick it for the cut, use it as a first or last frame, edit it, run the same model and style again, chain it into the next shot, delete it. Double-click to enlarge.
 
@@ -29,6 +31,8 @@ Tools like Recraft get this right: the pictures are the workspace, one bar makes
 ![A selected card: the toolbar on the card, and the Take panel showing what made it](docs/screenshots/take.webp)
 
 **The prompt bar writes to the board you last clicked.** Still or Clip, the prompt, which styles to render in, which models to run, the parameters, and what it will cost. Press Generate and a shimmering placeholder appears on the board with the generator's live log printed on it. When the job ends, the real card takes its place. An error stays as a red card until you dismiss it.
+
+**The bar folds, in four steps**, with `⌃ ⌄` in its top-right corner or `B` and `shift`+`B`. *Full* is everything; *compact* drops the styles, refs and model rows; *folded* is a single strip — what it will do and the button that does it; *hidden* takes it off the screen entirely, leaving one small `⌃` in the bottom-right corner to bring it back. The folded rows stay in force, so *compact* and *folded* carry a summary of the models, styles, references, `n` and the cost. Folding hides controls, never a charge — which is why *hidden* takes Generate away with it rather than leaving a button that spends against settings you cannot see.
 
 ![Mid-run: a placeholder card on the board with the live log line](docs/screenshots/placeholder.webp)
 
@@ -109,6 +113,8 @@ Every estimate says where its number comes from, because stills and clips are pr
 
 The numbers show up before you press anything (the cost line under the prompt), on each job in Activity, in the log itself, and as one toast per fan-out when every job in it has finished.
 
+**The bar offers only the parameters the picked model accepts.** The catalogue publishes real per-model limits — images per call, allowed resolutions and aspect ratios, how many references — and the still params read them: `n` is capped and greyed out at a model that makes one image per call, `res` and `aspect` are populated from that model's own list, and a parameter only some of the picked models understand is not offered at all, since the same request goes to every one of them. It is a clamp, not a label: a value already stored outside the limits is pulled back inside when you open the film or land on the shot, with a line saying what changed. Asking a model capped at one image for two is an HTTP 400 you would otherwise discover by paying for it.
+
 ![Activity: the live log of each call, with the estimate or the real charge on every job](docs/screenshots/activity.webp)
 
 ## On disk
@@ -124,7 +130,9 @@ films/<slug>/takes/<shot>/<take>.json   its sidecar: model, full prompt, params,
 genlog.jsonl                            one line per real call, with what it cost
 ```
 
-The canvas adds nothing to the data. Board order is shot order, and where you have panned to is kept in the browser.
+The canvas adds almost nothing to the data. Board order is shot order, and where you have panned to and how far you have zoomed are kept in the browser. The one exception is free placement: an `x`/`y` on a shot or a reference, written only once you move a node off the default row, and removed again by *tidy*.
+
+Deleting a film asks you to type its name and then moves the whole directory to `films/_trash/<slug>-<timestamp>` rather than removing it. A film is every take ever generated for it, which is real money, so it stays recoverable by moving the directory back.
 
 ## The key never leaves `bin/gen`
 
@@ -134,8 +142,9 @@ The repo has three moving parts: `bench.py` (the server and the canvas), `bin/ge
 
 ```
 gen models image|video [PATTERN]        the live catalogue with prices and frame support
+gen models image --json                 the same records raw, per-model limits included
 gen price MODEL --duration 6 --resolution 720p
-gen image --model M --prompt P --out FILE [--ref IMG]... [--dry-run]
+gen image --model M --prompt P --out FILE [--resolution R] [--aspect A] [--ref IMG]... [--dry-run]
 gen video --model M --prompt P --out FILE --first-frame F [--last-frame F] [--dry-run]
 gen spend                               key usage and what is left
 ```
@@ -150,12 +159,18 @@ gen spend                               key usage and what is left
 | Space + drag | pan, even over a board |
 | Ctrl + wheel | zoom around the cursor |
 | Esc | close dialog, lightbox, popover, selection, panel, in that order |
-| Left / Right | previous or next take in the lightbox |
-| Delete | delete the selected take, after asking |
+| Left / Right | previous or next shot — or previous or next take, in the lightbox |
+| Alt + Left / Right | move the active shot earlier or later in the film |
+| Delete | delete the selected take — or the active shot, when no take is selected |
+| N | new shot · Shift + N new film · D duplicate the active shot |
+| B / Shift + B | fold the prompt bar a step down or a step up |
+| S / L | styles panel · activity log |
+| / | jump into the prompt |
+| ? | show this list in the app |
 
 ## Checking that the buttons work
 
-`web/_selftest.html` loads the canvas in an iframe and clicks through 20 steps: boards, the bar, Still / Clip, the model picker, style chips, autosave, arming, card selection, drag onto a slot, the lightbox and its mask, the Styles panel, adding and deleting a shot, board reorder, a reference wired to a board, zoom, stitch. It snapshots the whole film first and puts every shot and style back at the end. Its last line is either `no repairs needed` or a list of what it had to repair, and a repair means a step above did something it should not have.
+`web/_selftest.html` loads the canvas in an iframe and clicks through every control: boards, the bar, Still / Clip, the model picker, style chips, autosave, arming, card selection, drag onto a slot, the lightbox and its mask, the Styles panel, adding and deleting a shot, board reorder, a reference wired to a board, zoom, stitch, the still params against each model's published limits, the clamp that pulls a stored value back inside them, free placement and tidy, both ways of deleting a shot, the prompt bar folding through its four steps, and the shortcut sheet. It snapshots the whole film first and puts every shot and style back at the end. Its last line is either `no repairs needed` or a list of what it had to repair, and a repair means a step above did something it should not have.
 
 It exists because every control that used `window.prompt` once went dead when Chrome's "prevent this page from creating additional dialogs" was ticked. The page rendered, nothing threw, and no button worked. All dialogs here are in-page, and a script error shows a red banner instead of leaving dead buttons behind.
 

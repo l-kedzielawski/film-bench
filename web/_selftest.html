@@ -150,7 +150,7 @@ document.getElementById('f').onload = async () => {
     if (!b) return 'board not created';
     b.querySelector('.bhead button').click(); await wait(200);
     const menu = qa('#pop .menu button').map(x => x.textContent).join(' | ');
-    qa('#pop .menu button').find(x => x.textContent === 'delete shot').click(); await wait(200);
+    qa('#pop .menu button').find(x => x.textContent.startsWith('delete shot')).click(); await wait(200);
     q('#askYes').click(); await wait(1200);
     return 'boards ' + before.shots.length + ' -> ' + made + ' -> ' + qa('.board:not(.adder)').length + ' · menu: ' + menu;
   });
@@ -200,6 +200,180 @@ document.getElementById('f').onload = async () => {
     const t1 = q('#world').style.transform; q('#fit').click(); await wait(50);
     return 'pct=' + q('#zoomPct').textContent + ' changed=' + (t0 !== t1) + ' fitChanged=' + (t1 !== q('#world').style.transform);
   });
+  // ---- deleting, the film menu, free placement, scrolling inside a node ----
+  const pev = (type, x, y) => new win.PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, button: 0, isPrimary: true, pointerType: 'mouse' });
+  const slide = (x, y) => q('#canvas').dispatchEvent(pev('pointermove', x, y));
+  const key = k => d.dispatchEvent(new win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+  const setActive = id => win.setActive(id);
+  const addShot = async title => {
+    q('.board.adder').click(); await wait(200);
+    q('#askInput').value = title; q('#askYes').click(); await wait(1200);
+    q('#prompt').blur();                       // + shot lands you in the prompt; keys are ignored while typing
+    await wait(80);
+    return q('.board[data-id^="' + title.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '"]');
+  };
+
+  await T('? lists the keyboard shortcuts', async () => {
+    await closeAll(); key('?'); await wait(220);
+    const rows = qa('#pop .krow').length;
+    key('Escape'); await wait(150);
+    return rows + ' shortcuts, closedOnEsc=' + q('#pop').hidden;
+  });
+
+  await T('film menu offers new, rename and delete', async () => {
+    q('#filmMenu').click(); await wait(220);
+    const labels = qa('#pop .menu button').map(b => b.textContent.trim());
+    const danger = qa('#pop .menu button.danger').length;
+    await closeAll();
+    return '[' + labels.join(' | ') + '] danger=' + danger;
+  });
+
+  await T('the ✕ on a board head deletes that shot', async () => {
+    const b = await addShot('Selftest ex');
+    if (!b) return 'board not created';
+    const n0 = qa('.board:not(.adder)').length;
+    b.querySelector('.bhead .bdel').click(); await wait(300);
+    const asked = !q('#ask').hidden;
+    q('#askYes').click(); await wait(1300);
+    return 'asked=' + asked + ' boards ' + n0 + ' -> ' + qa('.board:not(.adder)').length;
+  });
+
+  await T('Del deletes the active shot when no take is selected', async () => {
+    const b = await addShot('Selftest key');
+    if (!b) return 'board not created';
+    const n0 = qa('.board:not(.adder)').length;
+    key('Delete'); await wait(300);
+    const asked = !q('#ask').hidden;
+    q('#askNo').click(); await wait(400);
+    const kept = qa('.board:not(.adder)').length;
+    key('Delete'); await wait(300);
+    q('#askYes').click(); await wait(1300);
+    return 'asked=' + asked + ' cancelKept=' + (kept === n0) + ' boards ' + n0 + ' -> ' + qa('.board:not(.adder)').length;
+  });
+
+  await T('a downward drag frees the layout, tidy puts the row back', async () => {
+    await closeAll(); q('#fit').click(); await wait(400);
+    const b = qa('.board:not(.adder)')[0];
+    const [x, y] = center(b.querySelector('.bhead .num'));
+    const under = d.elementFromPoint(x, y);
+    if (!under || !under.closest('.bhead')) return 'could not grab a board head (' + (under && under.className) + ')';
+    ptr(q('#canvas'), 'pointerdown', x, y); await wait(50);
+    for (const dy of [60, 180, 320]) { slide(x + 20, y + dy); await wait(50); }
+    q('#canvas').dispatchEvent(pev('pointerup', x + 20, y + 320)); await wait(1000);
+    const placed = (await get()).shots.filter(s => s.x != null).length;
+    const order = (await get()).shots.map(s => s.id).join(',');
+    q('#filmMenu').click(); await wait(220);
+    const tidy = qa('#pop .menu button').find(z => /tidy/.test(z.textContent));
+    if (!tidy) { await closeAll(); return 'placed=' + placed + ' but no tidy item appeared'; }
+    tidy.click(); await wait(900);
+    return 'placed=' + placed + '/' + (await get()).shots.length + ' orderKept=' + (order === (await get()).shots.map(s => s.id).join(',')) +
+           ' afterTidy=' + (await get()).shots.filter(s => s.x != null).length;
+  });
+
+  await T('a long note scrolls instead of panning the canvas', async () => {
+    const note = qa('.board:not(.adder) .bnote')[0];
+    const keep = note.value;
+    note.value = 'a long line of note text that wraps and wraps and wraps. '.repeat(60);
+    note.dispatchEvent(new win.Event('input', { bubbles: true })); await wait(400);
+    const overflow = note.style.overflowY;
+    const before = win.getComputedStyle(q('#world')).transform;
+    const [x, y] = center(note);
+    note.dispatchEvent(new win.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: x, clientY: y, deltaY: 120 }));
+    await wait(250);
+    const panned = win.getComputedStyle(q('#world')).transform !== before;
+    q('#canvas').dispatchEvent(new win.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 30, clientY: 700, deltaY: 120 }));
+    await wait(250);
+    const bgPans = win.getComputedStyle(q('#world')).transform !== before;
+    note.value = keep; note.dispatchEvent(new win.Event('input', { bubbles: true })); await wait(900);
+    return 'overflowY=' + overflow + ' pannedUnderTheText=' + panned + ' backgroundStillPans=' + bgPans;
+  });
+
+  await T('the still params offer only what the picked model accepts', async () => {
+    await closeAll();
+    if (!qa('.mode')[0].classList.contains('on')) { qa('.mode')[0].click(); await wait(300); }
+    const models = qa('#barModels .chip-m.on').map(c => c.textContent.replace(/×$/, '').trim());
+    const cat = (await (await fetch('/api/models/image')).json()).models;
+    const lim = id => (cat.find(m => id && m.id.endsWith(id)) || {}).limits || {};
+    const first = lim(models[0]);
+    const res = [...q('#frameResolution').options].map(o => o.value).filter(Boolean);
+    const nMax = q('#frameN').max, nOff = q('#frameN').disabled;
+    const wantN = (first.n || [1, 4])[1];
+    const wantRes = first.resolution || [];
+    return 'model=' + models.join(',') +
+      ' | n max=' + nMax + ' (published ' + wantN + ') disabled=' + nOff + ' correct=' + (Number(nMax) === wantN && nOff === (wantN === 1)) +
+      ' | res offered=[' + res.join(',') + '] published=[' + wantRes.join(',') + '] correct=' + (JSON.stringify(res) === JSON.stringify(wantRes));
+  });
+
+  await T('a resolution outside the model limits is pulled back, not sent', async () => {
+    const sid = before.shots[0].id;
+    await post(`/api/film/${FILM}/shot/${sid}`, { frame: { resolution: 'NOT-A-RESOLUTION', n: 9 } });
+    await wait(300);
+    const bad = (await get()).shots.find(x => x.id === sid).frame;
+    // ?nostream means the page never hears about a server-side change, so reopen
+    // the film — which is also the real case: a bad value stored before you look
+    await win.openFilm(FILM); await wait(1800);
+    const now = (await get()).shots.find(x => x.id === sid).frame;
+    return 'stored bad {n:' + bad.n + ', res:' + JSON.stringify(bad.resolution) + '}' +
+           ' -> clamped {n:' + now.n + ', res:' + JSON.stringify(now.resolution) + '}' +
+           ' toast="' + q('#toast').textContent.slice(0, 54) + '"';
+  });
+
+  await T('the bar folds full -> compact -> strip -> hidden, and stops there', async () => {
+    await closeAll();
+    const bar = q('#bar'), fold = q('#barFold'), up = q('#barUnfold'), state = () => bar.className || 'full';
+    for (let i = 0; i < 4; i++) { up.click(); await wait(150); }
+    const seen = [state()], shows = [];
+    for (let i = 0; i < 4; i++) {
+      fold.click(); await wait(220);
+      seen.push(state());
+      // #bar is position:fixed, so offsetParent is always null — ask for display
+      shows.push(state() + ': bar=' + (win.getComputedStyle(bar).display !== 'none') +
+        ' cfg=' + (q('.bar-row.cfg').offsetParent !== null) +
+        ' opts=' + (q('#barStyles').offsetParent !== null) +   // #barOpt is display:contents — measure a child
+        ' prompt=' + (q('#prompt').offsetParent !== null) +
+        ' gen=' + (q('#gen').offsetParent !== null) +
+        ' showBtn=' + !q('#barShow').hidden +
+        ' up/down enabled=' + !up.disabled + '/' + !fold.disabled +
+        ' sum=' + (q('#barSummary').textContent.trim().length > 0));
+    }
+    return seen.join(' -> ') + '  ||  ' + shows.join('  ||  ');
+  });
+
+  await T('the fold controls stay in the corner however the chips wrap', async () => {
+    const bar = q('#bar'), fold = q('#barFold'), up = q('#barUnfold');
+    for (let i = 0; i < 4; i++) { up.click(); await wait(150); }
+    const br = bar.getBoundingClientRect(), fr = fold.getBoundingClientRect(), ur = up.getBoundingClientRect();
+    return 'inTopRight=' + (br.right - fr.right < 24 && fr.top - br.top < 24) +
+           ' sideBySide=' + (Math.abs(ur.top - fr.top) < 2 && fr.left >= ur.right - 1) +
+           ' (bar right/top ' + Math.round(br.right) + '/' + Math.round(br.top) +
+           ', fold ' + Math.round(fr.right) + '/' + Math.round(fr.top) + ')';
+  });
+
+  await T('unfold goes back one step, not the long way round', async () => {
+    const bar = q('#bar'), fold = q('#barFold'), up = q('#barUnfold'), state = () => bar.className || 'full';
+    for (let i = 0; i < 4; i++) { up.click(); await wait(130); }
+    const atTop = state() + ' upDisabled=' + up.disabled;
+    fold.click(); await wait(180); fold.click(); await wait(180);     // -> folded
+    const down2 = state();
+    up.click(); await wait(200);
+    const back1 = state();
+    up.click(); await wait(200);
+    const back2 = state() + ' upDisabled=' + q('#barUnfold').disabled;
+    for (let i = 0; i < 4; i++) { q('#barUnfold').click(); await wait(130); }
+    return 'at full: ' + atTop + ' | two folds -> ' + down2 + ' | one unfold -> ' + back1 + ' | another -> ' + back2;
+  });
+
+  await T('/ opens a hidden bar rather than focusing nothing', async () => {
+    const fold = q('#barFold'), bar = q('#bar');
+    for (let i = 0; i < 4 && bar.className !== 'gone'; i++) { fold.click(); await wait(150); }
+    const wasFolded = bar.className === 'gone';
+    key('/'); await wait(250);
+    const focused = d.activeElement === q('#prompt') || q('#prompt').offsetParent !== null;
+    q('#prompt').blur();
+    for (let i = 0; i < 4 && bar.className !== ''; i++) { fold.click(); await wait(150); }
+    return 'startedHidden=' + wasFolded + ' promptReachable=' + focused + ' backToFull=' + (bar.className === '');
+  });
+
   await T('stitch reports cleanly', async () => { q('#stitch').click(); await wait(2500); const t = q('#toast').textContent; if (!q('#lb').hidden) d.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return '"' + t.slice(0, 70) + '"'; });
 
   // Put the film back EXACTLY as found, and say what had to be repaired — a repair
@@ -216,11 +390,31 @@ document.getElementById('f').onload = async () => {
   for (const x of cur.shots) if (!saved.some(s => s.id === x.id)) { repairs.push('shot ' + x.id + ' was extra'); await post(`/api/film/${FILM}/shot/${x.id}/delete`); }
   for (const s of saved) { const f = s.full; const body = { title: f.title, note: f.note, first_frame: f.first_frame, last_frame: f.last_frame, selected_take: f.selected_take, styles: f.styles, clip: f.clip, frame: f.frame }; if ('refs' in f) body.refs = f.refs; await post(`/api/film/${FILM}/shot/${s.id}`, body); }
   await post(`/api/film/${FILM}/reorder`, { order: saved.map(s => s.id) });
+  // free placement lives outside the shot PATCH, so put it back on its own
+  const wantXY = {}, wantRefXY = {};
+  for (const s of saved) if (s.full.x != null) wantXY[s.id] = [s.full.x, s.full.y];
+  for (const r of savedRefs) if (r.x != null) wantRefXY[r.id] = [r.x, r.y];
+  await post(`/api/film/${FILM}/layout`, { reset: true });
+  // re-applying it is restoration, not a repair — the free-placement step tidies on purpose
+  if (Object.keys(wantXY).length || Object.keys(wantRefXY).length) await post(`/api/film/${FILM}/layout`, { shots: wantXY, refs: wantRefXY });
   const after = await get();
   const same = JSON.stringify(after.shots.map(strip)) === JSON.stringify(saved.map(s => s.full))
             && JSON.stringify(after.styles) === JSON.stringify(savedStyles)
             && JSON.stringify(after.refs || []) === JSON.stringify(savedRefs);
   log.push('film restored: ' + same + ' · shots ' + after.shots.map(s => s.id).join(',') + ' · styles ' + after.styles.map(s => s.id).join(','));
+  if (!same) {
+    // "restored: false" on its own tells you nothing — name the fields that drifted
+    const drift = [];
+    after.shots.map(strip).forEach((now, i) => {
+      const was = saved[i] && saved[i].full; if (!was) { drift.push('extra shot ' + now.id); return; }
+      for (const k of new Set([...Object.keys(now), ...Object.keys(was)]))
+        if (JSON.stringify(now[k]) !== JSON.stringify(was[k]))
+          drift.push(now.id + '.' + k + ': ' + JSON.stringify(was[k]).slice(0, 160) + "  ->  " + JSON.stringify(now[k]).slice(0, 160));
+    });
+    if (JSON.stringify(after.styles) !== JSON.stringify(savedStyles)) drift.push('styles differ');
+    if (JSON.stringify(after.refs || []) !== JSON.stringify(savedRefs)) drift.push('refs differ');
+    log.push('  drift: ' + (drift.join(' · ') || 'shot order or count'));
+  }
   log.push(repairs.length ? 'REPAIRS NEEDED (a step above misbehaved): ' + repairs.join('; ') : 'no repairs needed');
   document.getElementById('out').textContent = log.join('\n');
 };

@@ -20,7 +20,8 @@ window.addEventListener('error', e => {
 <header id="top">
   <span class="brand">film<b>bench</b></span>
   <select id="filmPick" title="film"></select>
-  <button id="newFilm" class="ghost" title="new film">+ film</button>
+  <button id="newFilm" class="ghost" title="new film  (shift + N)">+ film</button>
+  <button id="filmMenu" class="ghost" title="rename or delete this film">⋯</button>
   <span class="grow"></span>
   <div class="zoom">
     <button id="zoomOut" class="ghost" title="zoom out  (ctrl + wheel)">−</button>
@@ -31,6 +32,7 @@ window.addEventListener('error', e => {
   <span class="grow"></span>
   <button id="running" class="pill" hidden>● 0 running</button>
   <a id="agentLink" class="ghost" href="/agent" target="_blank" title="connect an agent: MCP snippet + the skill, with this bench's paths filled in">agent</a>
+  <button id="help" class="ghost" title="keyboard shortcuts  (?)">?</button>
   <button id="stylesBtn" class="ghost" title="the looks — one per lane">styles</button>
   <button id="stitch" class="ghost" title="join the picked clip of every shot, in order, into one file">stitch</button>
   <span id="spend" class="chip" title="OpenRouter key usage — click to refresh">…</span>
@@ -54,15 +56,24 @@ window.addEventListener('error', e => {
       <button class="mode" data-mode="clip">Clip</button>
     </div>
     <button id="target" class="target" title="the shot this bar writes to — click to centre it">no shot</button>
+    <!-- what is still in force while the rows are folded away. Generate spends
+         real money on settings you cannot see otherwise. -->
+    <span id="barSummary" class="sum"></span>
     <span class="grow"></span>
-    <span class="lbl">styles</span>
-    <div id="barStyles" class="chips-inline"></div>
-    <button id="manageStyles" class="ghost tiny" title="add or edit the looks">+</button>
-    <span class="sep"></span>
-    <span class="lbl" title="reference images this shot sends with every still">refs</span>
-    <div id="barRefs" class="chips-inline"></div>
-    <button id="addRef" class="ghost tiny" title="add reference images (or drop files on the canvas, or paste)">+</button>
+    <span id="barOpt" class="opt">
+      <span class="lbl">styles</span>
+      <div id="barStyles" class="chips-inline"></div>
+      <button id="manageStyles" class="ghost tiny" title="add or edit the looks">+</button>
+      <span class="sep"></span>
+      <span class="lbl" title="reference images this shot sends with every still">refs</span>
+      <div id="barRefs" class="chips-inline"></div>
+      <button id="addRef" class="ghost tiny" title="add reference images (or drop files on the canvas, or paste)">+</button>
+    </span>
     <input id="refFile" type="file" accept="image/*" multiple hidden>
+    <span class="folds">
+      <button id="barUnfold" class="ghost tiny fold" title="unfold a step  (shift + B)">⌃</button>
+      <button id="barFold" class="ghost tiny fold" title="fold a step  (B)">⌄</button>
+    </span>
   </div>
   <div class="bar-row main">
     <textarea id="prompt" rows="2"></textarea>
@@ -71,7 +82,7 @@ window.addEventListener('error', e => {
       <button id="est" class="ghost tiny" title="free — prints the exact request and its list price">estimate</button>
     </div>
   </div>
-  <div class="bar-row">
+  <div class="bar-row cfg">
     <span class="lbl">models</span>
     <div id="barModels" class="chips-inline"></div>
     <button id="pickModels" class="ghost tiny" title="pick from the live catalogue">+</button>
@@ -85,6 +96,9 @@ window.addEventListener('error', e => {
     </div>
     <div id="frameParams" class="params">
       <label>n <input id="frameN" type="number" min="1" max="4" step="1"></label>
+      <!-- only what every picked model actually accepts, from the live catalogue -->
+      <label id="frameResWrap">res <select id="frameResolution"></select></label>
+      <label id="frameAspectWrap">aspect <select id="frameAspect"></select></label>
     </div>
     <span class="grow"></span>
     <button id="composedBtn" class="ghost tiny" title="the exact text that gets sent, per style">composed</button>
@@ -92,6 +106,10 @@ window.addEventListener('error', e => {
   </div>
   <p id="warn" class="warn" hidden></p>
 </div>
+
+<!-- the way back when the bar is hidden outright. Bottom-right corner, not
+     bottom-centre, so it does not sit on top of a board. -->
+<button id="barShow" title="show the prompt bar  (B)" hidden>⌃</button>
 
 <!-- Right panel: the selected take, the styles, or the live log. Closed until
      something wants it. -->

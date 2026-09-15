@@ -324,7 +324,7 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:#3d6b58}
 /* reference images: nodes above the boards, wired to the boards that use them */
 .refcard{position:absolute;width:210px;background:var(--panel);border:1px solid #2c4a68;border-radius:9px;padding:8px;
   box-shadow:0 10px 40px rgba(0,0,0,.35);transition:left .28s cubic-bezier(.2,.7,.2,1)}
-.refcard.lifting{transition:none;opacity:.94}
+.refcard.lifting{transition:none;opacity:.94;z-index:6;box-shadow:0 26px 60px rgba(0,0,0,.6)}
 .refcard .rthumb{aspect-ratio:16/9;background:#000;border-radius:5px;overflow:hidden;cursor:grab;position:relative}
 .refcard .rthumb:active{cursor:grabbing}
 .refcard .rthumb img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;-webkit-user-drag:none}
@@ -353,3 +353,64 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:#3d6b58}
 .tk-refs div{display:flex;gap:8px;align-items:flex-start;font:11.5px/1.5 var(--mono);color:var(--dim)}
 .tk-refs img{width:72px;aspect-ratio:16/9;object-fit:cover;border-radius:4px;border:1px solid var(--line);background:#000;flex:none}
 .tk-refs b{display:block;color:var(--blue);font-weight:500}
+
+/* ---- delete on a node head, the reference grip, the shortcut sheet -------- */
+.bhead .bdel{color:var(--faint)}
+.bhead .bdel:hover{color:var(--hot);border-color:#4a2320}
+.refcard .grip{cursor:grab;color:var(--faint);font-size:13px;line-height:1;padding:0 3px 0 0;user-select:none;touch-action:none}
+.refcard .grip:hover{color:var(--ink)}
+.refcard .grip:active{cursor:grabbing}
+.keys{display:flex;flex-direction:column;gap:5px;min-width:min(420px,calc(100vw - 48px))}
+.keys h4{margin:2px 0;font:600 10px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+.keys h4+.krow{margin-top:2px}
+.krow{display:flex;gap:11px;align-items:baseline;font-size:12.5px;color:var(--dim)}
+.krow kbd{flex:0 0 118px;font:11px/1.7 var(--mono);color:var(--ink);background:var(--panel2);
+  border:1px solid var(--line);border-radius:4px;padding:0 6px;text-align:center;white-space:nowrap}
+.keys .hint{margin:0;line-height:1.65}
+
+/* ---- folding the prompt bar: full -> compact -> folded -------------------- */
+#barOpt{display:contents}
+#bar .fold{margin-left:2px;font-size:13px;line-height:1;color:var(--faint)}
+#bar .fold:hover{color:var(--ink)}
+#bar .sum{display:none;font:11px/1.5 var(--mono);color:var(--dim);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+#bar.compact .sum,#bar.folded .sum{display:inline-block}
+#bar.compact #barOpt,#bar.folded #barOpt,
+#bar.compact .bar-row.cfg,#bar.folded .bar-row.cfg{display:none}
+#bar.compact .bar-row.main{margin:8px 0 0}
+/* a definite width, not auto: a fixed element at left:50% shrink-wraps against
+   the half-viewport left of it, and the go buttons spill out of the box */
+#bar.folded{display:flex;align-items:center;gap:12px;padding:7px 10px 7px 12px}
+#bar.folded>.bar-row{flex:1 1 auto;min-width:0;flex-wrap:nowrap}
+#bar.folded>.bar-row.main{flex:0 0 auto}
+#bar.folded #prompt{display:none}
+#bar.folded .bar-row.main{margin:0}
+/* the cost is the whole reason the strip exists — when the line is too long the
+   shot title gives way first, and the summary only as a last resort */
+#bar.folded .target{flex:0 1 auto;min-width:0;max-width:280px}
+#bar.folded .sum{flex:0 1 auto;min-width:0;flex-shrink:.15}
+#bar.folded .bar-go{flex-direction:row;width:auto;gap:8px;align-items:center}
+#bar.folded .bar-go .gen{padding:6px 14px}
+#bar.folded .bar-go .tiny{padding:4px 6px}
+
+/* per-model limits: the still params now offer selects, not free text */
+.params select{padding:3px 4px;font-size:11.5px;background:var(--panel2);color:var(--ink);
+  border:1px solid var(--line);border-radius:5px;font-family:var(--mono)}
+.params select:hover{border-color:var(--line2)}
+.params input:disabled{opacity:.45;cursor:not-allowed}
+
+/* hidden outright, and a fold control that wrapping cannot bury */
+#bar.gone{display:none}
+#barShow{position:fixed;right:14px;bottom:14px;z-index:30;width:30px;height:30px;padding:0;
+  border-radius:15px;background:rgba(22,24,28,.94);backdrop-filter:blur(14px);
+  border:1px solid var(--line2);color:var(--dim);font-size:13px;line-height:1;
+  box-shadow:0 10px 30px rgba(0,0,0,.5)}
+#barShow:hover{color:var(--ink);border-color:var(--acc2)}
+/* With many style and reference chips the top row wraps, and an inline fold
+   button ends up stranded at the bottom of the block. Pin it to the corner. */
+#bar:not(.folded){padding-right:62px}
+#bar .folds{display:inline-flex;gap:1px;align-items:center}
+#bar:not(.folded) .folds{position:absolute;top:7px;right:8px}
+#bar .fold{margin:0;padding:2px 5px}
+#bar .fold:disabled{opacity:.25;cursor:default;border-color:transparent}
+#bar .fold:disabled:hover{color:var(--faint);border-color:transparent}

@@ -10,9 +10,10 @@ which file, from what prompt, for how much. That is the record the EU AI Act
 (Art. 50) asks for, and it is what the bench reads to price a still.
 
 Usage
-  gen models image|video [PATTERN]
+  gen models image|video [PATTERN] [--json]
   gen price MODEL [--duration N] [--resolution R] [--audio]
-  gen image --model M --prompt P --out FILE [-n N] [--ref IMG]... [--extra JSON] [--dry-run]
+  gen image --model M --prompt P --out FILE [-n N] [--resolution R] [--aspect A]
+            [--ref IMG]... [--extra JSON] [--dry-run]
   gen video --model M --prompt P --out FILE [--duration N] [--resolution R]
             [--aspect A] [--first-frame F] [--last-frame F] [--no-audio]
             [--seed N] [--extra JSON] [--dry-run]
@@ -174,9 +175,16 @@ def cmd_price(args) -> None:
 def cmd_models(args) -> None:
     kind = args.kind
     rows = public_get(f"/{kind}s/models")["data"]
+    if args.pattern:
+        rows = [m for m in rows if args.pattern.lower() in m["id"].lower()]
+    if args.json:
+        # The catalogue publishes the real per-model limits — n range, allowed
+        # resolutions and aspect ratios, how many references it will take. The
+        # printed table throws them away; anything enforcing a limit before
+        # spending needs them intact.
+        print(json.dumps(rows, ensure_ascii=False))
+        return
     for m in rows:
-        if args.pattern and args.pattern.lower() not in m["id"].lower():
-            continue
         bits = []
         if m.get("supported_durations"):
             bits.append(f"dur={m['supported_durations']}")
@@ -223,6 +231,10 @@ def cmd_image(args) -> None:
     body = {"model": args.model, "prompt": args.prompt}
     if args.n > 1:
         body["n"] = args.n
+    if args.resolution:
+        body["resolution"] = args.resolution
+    if args.aspect:
+        body["aspect_ratio"] = args.aspect
     if args.ref:
         body["input_references"] = [image_ref(r) for r in args.ref]
     body.update(json.loads(args.extra) if args.extra else {})
@@ -352,6 +364,8 @@ def main() -> None:
     m = sub.add_parser("models", help="list image or video models with prices")
     m.add_argument("kind", choices=["image", "video"])
     m.add_argument("pattern", nargs="?")
+    m.add_argument("--json", action="store_true",
+                   help="dump the raw catalogue records, limits included")
     m.set_defaults(fn=cmd_models)
 
     p = sub.add_parser("price", help="show every pricing SKU for one model")
@@ -369,6 +383,8 @@ def main() -> None:
     i.add_argument("--prompt", required=True)
     i.add_argument("--out", required=True)
     i.add_argument("-n", type=int, default=1)
+    i.add_argument("--resolution", help="e.g. 1K, 2K, 4K — see `gen models image --json`")
+    i.add_argument("--aspect", help="e.g. 1:1, 16:9 — see `gen models image --json`")
     i.add_argument("--extra", help="extra JSON merged into the request body")
     i.add_argument("--ref", action="append", default=[],
                    help="reference image to edit from; repeatable")
