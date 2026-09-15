@@ -21,7 +21,11 @@ document.getElementById('f').onload = async () => {
   const strip = s => { const o = JSON.parse(JSON.stringify(s)); delete o.takes; return o; };
   const saved = before.shots.map(s => ({ id: s.id, clip: s.clip.models, frame: s.frame.models, styles: s.styles, fprompt: s.frame.prompt, cprompt: s.clip.prompt, order: before.shots.map(x => x.id), full: strip(s) }));
   const savedStyles = JSON.parse(JSON.stringify(before.styles || []));
-  const savedRefs = JSON.parse(JSON.stringify(before.refs || []));
+  // `v` is the reference's cache version, derived from the file's mtime. Rewriting
+  // a file with identical bytes still moves it, so comparing it is comparing the
+  // clock, not the film — strip it from both sides like `takes` on a shot.
+  const stripRefs = rs => (rs || []).map(r => { const o = Object.assign({}, r); delete o.v; return o; });
+  const savedRefs = stripRefs(JSON.parse(JSON.stringify(before.refs || [])));
   const T = async (name, fn) => { try { log.push(name + ': ' + await fn()); } catch (e) { log.push(name + ': THREW ' + e.message); } };
   // dispatch on whatever is really under the point — a real pointer does
   const ptr = (_t, type, x, y, extra) => (d.elementFromPoint(x, y) || q('#canvas')).dispatchEvent(new win.PointerEvent(type, Object.assign({ bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, button: 0, isPrimary: true, pointerType: 'mouse' }, extra || {})));
@@ -367,6 +371,47 @@ document.getElementById('f').onload = async () => {
            ' closedOnEsc=' + q('#lb').hidden;
   });
 
+  await T('replacing a reference picture repaints the card and the chip', async () => {
+    await closeAll();
+    const card = q('.refcard'); if (!card) return 'no reference on this film';
+    const rid = card.dataset.ref;
+    const was = (await get()).refs.find(r => r.id === rid);
+    // the pixel a rendered <img> is really showing, not what its src says
+    const pixelOf = async src => {
+      const im = new win.Image(); im.src = src;
+      await new Promise(r => { im.onload = r; im.onerror = r; });
+      const c = d.createElement('canvas'); c.width = c.height = 1;
+      const g = c.getContext('2d'); g.drawImage(im, 0, 0, 1, 1);
+      return [...g.getImageData(0, 0, 1, 1).data].slice(0, 3).join(',');
+    };
+    const asDataUrl = async url => {
+      const b = await (await fetch(url)).blob();
+      return new Promise(r => { const rd = new win.FileReader(); rd.onload = () => r(rd.result); rd.readAsDataURL(b); });
+    };
+    // keep the original bytes so this step can put the picture back exactly
+    const original = await asDataUrl('/media/' + FILM + '/' + was.file + '?snapshot=' + Date.now());
+    const before = await pixelOf(card.querySelector('img').src);
+    const blue = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGOQs7mDFTEMLQkAGQpNgZweqk4AAAAASUVORK5CYII=';   // 8x8 solid blue, generated and round-tripped
+    // this step overwrites a file that is committed to the repo, so the original
+    // bytes go back even when an assertion above them blows up
+    let cardPix, chipPix, versioned;
+    try {
+      await post(`/api/film/${FILM}/refs`, { id: rid, data: blue });
+      await win.openFilm(FILM); await wait(1200);
+      const img = q(`.refcard[data-ref="${rid}"] img`), chip = q('#barRefs .chip-m img');
+      cardPix = await pixelOf(img.src);
+      chipPix = chip ? await pixelOf(chip.src) : 'no chip';
+      versioned = /\?v=\d+/.test(img.src);
+    } finally {
+      await post(`/api/film/${FILM}/refs`, { id: rid, data: original });
+      await win.openFilm(FILM); await wait(1000);
+    }
+    const restored = await pixelOf(q(`.refcard[data-ref="${rid}"] img`).src);
+    return 'card ' + before + ' -> ' + cardPix + ' | chip ' + chipPix +
+           ' | repainted=' + (cardPix !== before && chipPix !== before) +
+           ' | versioned=' + versioned + ' | restored=' + (restored === before);
+  });
+
   await T('linking a reference leaves its grip alone', async () => {
     const n = q('.refcard');
     if (!n) return 'no reference on this film';
@@ -461,7 +506,7 @@ document.getElementById('f').onload = async () => {
   const after = await get();
   const same = JSON.stringify(after.shots.map(strip)) === JSON.stringify(saved.map(s => s.full))
             && JSON.stringify(after.styles) === JSON.stringify(savedStyles)
-            && JSON.stringify(after.refs || []) === JSON.stringify(savedRefs);
+            && JSON.stringify(stripRefs(after.refs)) === JSON.stringify(savedRefs);
   log.push('film restored: ' + same + ' · shots ' + after.shots.map(s => s.id).join(',') + ' · styles ' + after.styles.map(s => s.id).join(','));
   if (!same) {
     // "restored: false" on its own tells you nothing — name the fields that drifted
@@ -473,7 +518,7 @@ document.getElementById('f').onload = async () => {
           drift.push(now.id + '.' + k + ': ' + JSON.stringify(was[k]).slice(0, 160) + "  ->  " + JSON.stringify(now[k]).slice(0, 160));
     });
     if (JSON.stringify(after.styles) !== JSON.stringify(savedStyles)) drift.push('styles differ');
-    if (JSON.stringify(after.refs || []) !== JSON.stringify(savedRefs)) drift.push('refs differ');
+    if (JSON.stringify(stripRefs(after.refs)) !== JSON.stringify(savedRefs)) drift.push('refs differ');
     log.push('  drift: ' + (drift.join(' · ') || 'shot order or count'));
   }
   log.push(repairs.length ? 'REPAIRS NEEDED (a step above misbehaved): ' + repairs.join('; ') : 'no repairs needed');

@@ -378,7 +378,10 @@ function renderBoard(s, i) {
   return b;
 }
 
-const refUrl = r => `/media/${S.film.slug}/${r.file}`;
+// A replaced reference keeps its path, so the URL carries the version the server
+// stamps on it — otherwise the canvas and the bar chips go on painting the old
+// picture out of cache. Constant between replacements, so nothing re-downloads.
+const refUrl = r => `/media/${S.film.slug}/${r.file}` + (r.v ? `?v=${r.v}` : '');
 function refUsers(r) { return S.film.shots.filter(s => (s.refs || []).includes(r.id)); }
 
 function renderRef(r) {
@@ -1656,7 +1659,7 @@ function openLightbox(s, t) {
     $('#lbRefTag').value = lb.ref.tag || '';
     $('#lbRefNote').textContent = (() => { const u = refUsers(lb.ref); return u.length ? `sent by ${u.length} shot${u.length === 1 ? '' : 's'}` : 'not linked to any board yet'; })();
   }
-  const file = lb.ref ? refUrl(lb.ref) + '?t=' + Date.now() : lb.plain ? lb.plain.file : t.file;
+  const file = lb.ref ? refUrl(lb.ref) : lb.plain ? lb.plain.file : t.file;
   if (lb.video) { vid.src = file; vid.currentTime = 0; vid.play().catch(() => {}); }
   else {
     img.src = file;

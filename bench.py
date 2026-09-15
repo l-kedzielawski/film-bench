@@ -142,6 +142,18 @@ def load_film(slug):
     with open(film_path(slug), encoding='utf-8') as f:
         film = json.load(f)
     film['slug'] = slug
+    # A reference is the one file whose path stays the same while its bytes
+    # change, so a browser goes on painting the old picture out of cache. Stamp
+    # the version the canvas puts in the URL — derived from the file itself, so
+    # it is never written to film.json, never a spurious diff, and still correct
+    # if an image is swapped underneath the bench.
+    for ref in film.get('refs', []):
+        try:
+            # milliseconds: whole seconds would collide on two replacements
+            # inside the same second and the cache would bite again
+            ref['v'] = int(os.path.getmtime(os.path.join(film_dir(slug), ref['file'])) * 1000)
+        except (OSError, KeyError):
+            ref.pop('v', None)
     for shot in film.get('shots', []):
         shot['takes'] = list_takes(slug, shot['id'])
     return film
@@ -152,6 +164,8 @@ def save_film(film):
     out = {k: v for k, v in film.items() if k != 'slug'}
     for shot in out.get('shots', []):
         shot.pop('takes', None)
+    for ref in out.get('refs', []):
+        ref.pop('v', None)          # derived from the file's mtime, never stored
     atomic_write(film_path(slug), json.dumps(out, ensure_ascii=False, indent=2) + '\n')
 
 

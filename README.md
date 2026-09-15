@@ -51,7 +51,7 @@ The dry-run command shows one `--ref` per image, and the take's sidecar records 
 
 ![A reference node wired to the second board, with the composed prompt showing the numbered block](docs/screenshots/references.webp)
 
-**Double-click a reference** to open it large. Its name and what to take from it are editable there with room to write, and **Replace image…** swaps the picture under the node. The id survives, which is the point: every board that sends the reference links to that id, so deleting and re-adding would unlink it everywhere and lose the tag. Replacing keeps both, and every linked board picks the new picture up.
+**Double-click a reference** to open it large. Its name and what to take from it are editable there with room to write, and **Replace image…** swaps the picture under the node. The id survives, which is the point: every board that sends the reference links to that id, so deleting and re-adding would unlink it everywhere and lose the tag. A replaced picture appears everywhere at once — the card, the bar chip and the lightbox — because a reference is the one file whose path stays the same while its bytes change, so its URL carries a version derived from the file's own mtime. Replacing keeps both, and every linked board picks the new picture up.
 
 ## Driving it from an agent
 
