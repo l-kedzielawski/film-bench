@@ -103,7 +103,9 @@ Drag the line, or nudge it with `←` `→` (`shift` for bigger steps); `Space` 
 
 ## Names you can paste
 
-Every take ends in a short unique handle — `#2a0`, `#185` — printed on its card, in the Take panel and on both sides of an A|B. It is something you can say out loud and search for, which a 45-character filename is not. Clicking a handle copies the take's **absolute path**, ready to paste at an agent: *use this image*, *this one is fine, let us go with it*. References carry the same `path` button in their footer, and the Take panel has **copy path** next to the file.
+Every take ends in a short unique handle — `#2a0`, `#185` — printed on its card, in the Take panel and on both sides of an A|B. It is something you can say out loud and search for, which a 45-character filename is not. Clicking a handle copies the take's **file name** — `20260915-131619-sheet-white-gpt-image-2-5-sunburst-078.png` — which already carries the date, the style, the model and the handle, and is plain text: paste it at an agent to say *use this one* and it costs a line. `shift`- or `alt`-click copies the **absolute path** instead, for when you want the image itself looked at; most terminals turn a path to a PNG into the whole image, which is tokens you did not mean to spend just to say which one you meant. References carry the same `name` button in their footer, and the Take panel spells both out as **copy name** and **copy path**.
+
+There are deliberately no hand-written names. At the rate takes arrive, naming each one is friction that buys nothing the file name does not already say.
 
 ## Editing a still
 

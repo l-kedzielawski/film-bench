@@ -406,9 +406,13 @@ function renderRef(r) {
   requestAnimationFrame(() => autosize(tag));
   const foot = el('div', 'rfoot');
   const grip = el('span', 'grip', '⠿'); grip.title = 'drag to move this node';
-  const cp = el('button', 'tk-tag', 'path');
-  cp.title = 'copy this reference\u2019s path, to hand an agent the exact image';
-  cp.onclick = e => { e.stopPropagation(); copyText((S.root ? S.root.replace(/\/$/, '') + '/' : 'films/') + S.film.slug + '/' + r.file, r.name || r.id); };
+  const cp = el('button', 'tk-tag', 'name');
+  cp.title = COPY_HINT;
+  cp.onclick = e => {
+    e.stopPropagation();
+    const full = (S.root ? S.root.replace(/\/$/, '') + '/' : 'films/') + S.film.slug + '/' + r.file;
+    copyText(e.shiftKey || e.altKey ? full : r.file.split('/').pop(), r.name || r.id);
+  };
   cp.onpointerdown = e => e.stopPropagation();
   foot.append(grip, cp);
   const used = el('span', 'used'); const paintUsed = () => { const u = refUsers(r); used.textContent = u.length ? `→ ${u.length} shot${u.length === 1 ? '' : 's'}` : 'not linked — drag onto a board'; };
@@ -493,8 +497,8 @@ function renderCard(s, t) {
   th.append(el('span', 'kind', t.ext === '.mp4' ? 'CLIP' : (t.style_name === 'edit' ? 'EDIT' : 'STILL')));
   const tags = el('div', 'tags');
   const tag = el('button', 'tk-tag', takeTag(t));
-  tag.title = 'copy this take\u2019s path, to hand an agent the exact image';
-  tag.onclick = e => { e.stopPropagation(); copyText(takePath(s, t), takeTag(t)); };
+  tag.title = COPY_HINT;
+  tag.onclick = e => { e.stopPropagation(); copyTake(s, t, e); };
   tag.onpointerdown = e => e.stopPropagation();
   tags.append(tag);
   tags.append(el('span', 'm', short(t.model) || '?'));
@@ -1444,8 +1448,8 @@ function paintTake() {
   const body = el('div', 'tk-body');
   const h3 = el('h3', 'tk-title', `${short(t.model)}`);
   const tag = el('button', 'tk-tag big', takeTag(t));
-  tag.title = 'copy this take\u2019s path, to hand an agent the exact image';
-  tag.onclick = () => copyText(takePath(s, t), takeTag(t));
+  tag.title = COPY_HINT;
+  tag.onclick = e => copyTake(s, t, e);
   h3.append(tag);
   body.append(h3);
   const sub = el('div', 'tk-sub');
@@ -1491,10 +1495,15 @@ function paintTake() {
     d.append(box); body.append(d);
   }
   if (t.edit_of) sec('EDIT OF', t.edit_of + (t.masked ? '  (region-marked)' : ''), null, true);
-  const copyFile = el('button', 'ghost tiny', 'copy path');
-  copyFile.title = 'the absolute path, ready to paste at an agent';
-  copyFile.onclick = () => copyText(takePath(s, t), takeTag(t));
-  sec('FILE', takePath(s, t), copyFile, true);
+  const copies = el('span');
+  const cName = el('button', 'ghost tiny', 'copy name');
+  cName.title = 'just the file name — text, so pasting it costs nothing';
+  cName.onclick = () => copyText(takeFile(t), takeTag(t));
+  const cPath = el('button', 'ghost tiny', 'copy path');
+  cPath.title = 'the absolute path — most terminals turn this into the image itself';
+  cPath.onclick = () => copyText(takePath(s, t), takeTag(t) + ' path');
+  copies.append(cName, cPath);
+  sec('FILE', takePath(s, t), copies, true);
   pane.append(body);
 }
 
@@ -1670,10 +1679,22 @@ function listen() {
    45-character filename is not. Clicking it copies the absolute path, because
    the thing you are usually doing is telling an agent which image you mean. */
 const takeTag = t => '#' + String(t.id || '').split('-').pop();
+/* The filename is already a good name: date, time, style, model and the handle.
+   It is what a click copies, because a terminal that sees an absolute path to a
+   PNG attaches the whole image — tokens you did not mean to spend just to say
+   which one you meant. The path is one modifier away for when you do want it
+   looked at. */
+const takeFile = t => (t.file || '').split('/').pop();
 const takePath = (s, t) => {
   const rel = (t.file || '').replace('/media/', '');
   return S.root ? S.root.replace(/\/$/, '') + '/' + rel : 'films/' + rel;
 };
+const COPY_HINT = 'click: the file name, cheap to paste at an agent\n' +
+                  'shift- or alt-click: the full path, which most terminals turn into the image itself';
+const copyTake = (s, t, e) => (e && (e.shiftKey || e.altKey))
+  ? copyText(takePath(s, t), takeTag(t) + ' path')
+  : copyText(takeFile(t), takeTag(t));
+
 async function copyText(text, what) {
   try {
     await navigator.clipboard.writeText(text);

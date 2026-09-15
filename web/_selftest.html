@@ -482,13 +482,28 @@ document.getElementById('f').onload = async () => {
            ' | A="' + tagA.slice(0, 40) + '" | closed=' + q('#lb').hidden;
   });
 
-  await T('every take carries a short handle that copies its path', async () => {
+  await T('a handle copies the file name, and the path only on shift', async () => {
     const tags = qa('.card .tk-tag');
     if (!tags.length) return 'no takes on this film';
     const shapes = tags.map(t => t.textContent).slice(0, 4);
-    const ok = shapes.every(x => /^#[0-9a-f]{2,4}$/.test(x));
-    return tags.length + ' handles ' + shapes.join(' ') + ' wellFormed=' + ok +
-           ' | refs also offer one: ' + qa('.refcard .tk-tag').length;
+    const wellFormed = shapes.every(x => /^#[0-9a-f]{2,4}$/.test(x));
+    // watch the clipboard instead of writing to it — a headless run has no permission
+    let last = null;
+    const real = Object.getOwnPropertyDescriptor(win.navigator, 'clipboard');
+    Object.defineProperty(win.navigator, 'clipboard', { value: { writeText: async t => { last = t; } }, configurable: true });
+    const hit = extra => { last = null; tags[0].dispatchEvent(new win.MouseEvent('click', Object.assign({ bubbles: true, cancelable: true }, extra || {}))); };
+    hit(); await wait(250);
+    const plain = last;
+    hit({ shiftKey: true }); await wait(250);
+    const shifted = last;
+    hit({ altKey: true }); await wait(250);
+    const alted = last;
+    if (real) Object.defineProperty(win.navigator, 'clipboard', real);
+    return tags.length + ' handles ' + shapes.join(' ') + ' wellFormed=' + wellFormed +
+           ' | click -> a bare file name=' + (!!plain && !plain.includes('/')) +
+           ' | shift -> absolute=' + /^\//.test(shifted || '') +
+           ' | alt -> absolute=' + /^\//.test(alted || '') +
+           ' | refs offer one too: ' + qa('.refcard .tk-tag').length;
   });
 
   await T('the bar folds full -> compact -> strip -> hidden, and stops there', async () => {
