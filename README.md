@@ -22,7 +22,7 @@ Tools like Recraft get this right: the pictures are the workspace, one bar makes
 
 **Boards are shots, left to right in film order.** Drag a board by its head along the row to reorder it. The order is saved, because the order of the boards is the cut. The dashed board at the end adds a shot, `✕` on a head deletes one, and `⋯` carries centre, duplicate, move earlier or later, and free placement.
 
-**Arrange the nodes however you like.** Pull a board *downwards* off the row and the film switches to free placement: from then on a drag just moves the node wherever you want it, reference nodes move by the `⠿` grip in their footer, and positions are saved per node so the arrangement survives a reload. Film order never depends on where a node sits — it stays the number badge on the head, changed with `alt` + `←` `→`. *Tidy every node back into a row* in either `⋯` menu throws the positions away.
+**Arrange the nodes however you like.** Pull a board *downwards* off the row and the film switches to free placement: from then on a drag just moves the node wherever you want it, and positions are saved per node so the arrangement survives a reload. Hold `ctrl` (or `⌘`) and any node can be picked up from anywhere on it — over its title, its notes, its cards — rather than only by its head; reference nodes also carry a `⠿` grip in their footer. Film order never depends on where a node sits — it stays the number badge on the head, changed with `alt` + `←` `→`. *Tidy every node back into a row* in either `⋯` menu throws the positions away.
 
 **Cards are takes, newest first.** Hover a clip and it plays. Click a card and a toolbar appears on it: pick it for the cut, use it as a first or last frame, edit it, run the same model and style again, chain it into the next shot, delete it. Double-click to enlarge.
 
@@ -157,6 +157,7 @@ gen spend                               key usage and what is left
 | 1 / 2 | Still / Clip |
 | F, or double-click the background | fit the whole film |
 | Space + drag | pan, even over a board |
+| Ctrl + drag | move a node from anywhere on it |
 | Ctrl + wheel | zoom around the cursor |
 | Esc | close dialog, lightbox, popover, selection, panel, in that order |
 | Left / Right | previous or next shot — or previous or next take, in the lightbox |
@@ -170,7 +171,7 @@ gen spend                               key usage and what is left
 
 ## Checking that the buttons work
 
-`web/_selftest.html` loads the canvas in an iframe and clicks through every control: boards, the bar, Still / Clip, the model picker, style chips, autosave, arming, card selection, drag onto a slot, the lightbox and its mask, the Styles panel, adding and deleting a shot, board reorder, a reference wired to a board, zoom, stitch, the still params against each model's published limits, the clamp that pulls a stored value back inside them, free placement and tidy, both ways of deleting a shot, the prompt bar folding through its four steps, and the shortcut sheet. It snapshots the whole film first and puts every shot and style back at the end. Its last line is either `no repairs needed` or a list of what it had to repair, and a repair means a step above did something it should not have.
+`web/_selftest.html` loads the canvas in an iframe and clicks through every control: boards, the bar, Still / Clip, the model picker, style chips, autosave, arming, card selection, drag onto a slot, the lightbox and its mask, the Styles panel, adding and deleting a shot, board reorder, a reference wired to a board, zoom, stitch, the still params against each model's published limits, the clamp that pulls a stored value back inside them, free placement, ctrl-dragging a node from its middle, and tidy, both ways of deleting a shot, the prompt bar folding through its four steps, and the shortcut sheet. It snapshots the whole film first and puts every shot and style back at the end. Its last line is either `no repairs needed` or a list of what it had to repair, and a repair means a step above did something it should not have.
 
 It exists because every control that used `window.prompt` once went dead when Chrome's "prevent this page from creating additional dialogs" was ticked. The page rendered, nothing threw, and no button worked. All dialogs here are in-page, and a script error shows a red banner instead of leaving dead buttons behind.
 

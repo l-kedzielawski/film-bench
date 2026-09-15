@@ -395,7 +395,7 @@ function renderRef(r) {
   const foot = el('div', 'rfoot');
   const grip = el('span', 'grip', '⠿'); grip.title = 'drag to move this node';
   foot.append(grip);
-  const used = el('span'); const paintUsed = () => { const u = refUsers(r); used.textContent = u.length ? `→ ${u.length} shot${u.length === 1 ? '' : 's'}` : 'not linked — drag onto a board'; };
+  const used = el('span', 'used'); const paintUsed = () => { const u = refUsers(r); used.textContent = u.length ? `→ ${u.length} shot${u.length === 1 ? '' : 's'}` : 'not linked — drag onto a board'; };
   paintUsed();
   const saved = el('span', 'saved', 'saved');
   const del = el('button', 'ghost', '✕'); del.title = 'remove this reference and unlink it everywhere';
@@ -447,7 +447,7 @@ async function toggleRef(s, rid) {
   s.refs = [...next];
   await api('POST', `/api/film/${S.film.slug}/shot/${s.id}`, { refs: s.refs });
   paintBarRefs(); drawWires();
-  $$('#world .refcard').forEach(n => { const r = (S.film.refs || []).find(x => x.id === n.dataset.ref); if (r) { const u = refUsers(r); n.querySelector('.rfoot span').textContent = u.length ? `→ ${u.length} shot${u.length === 1 ? '' : 's'}` : 'not linked — drag onto a board'; } });
+  $$('#world .refcard').forEach(n => { const r = (S.film.refs || []).find(x => x.id === n.dataset.ref); if (r) { const u = refUsers(r); n.querySelector('.rfoot .used').textContent = u.length ? `→ ${u.length} shot${u.length === 1 ? '' : 's'}` : 'not linked — drag onto a board'; } });
   const meta = document.querySelector(`.board[data-id="${s.id}"] .bmeta`); if (meta) paintBoardMeta(meta, s);
 }
 
@@ -698,6 +698,17 @@ function centerOn(id) {
     const t = e.target;
     const board = t.closest('.board');
     if (board && board.dataset.id) setActive(board.dataset.id);
+    // Ctrl (or ⌘) + drag picks a node up from anywhere on it — over its title,
+    // its notes, its cards — instead of hunting for the head or the grip.
+    if ((e.ctrlKey || e.metaKey) && !S.space) {
+      const node = t.closest('.refcard') || (board && !board.dataset.adder ? board : null);
+      if (node) {
+        start = { kind: 'node', x: e.clientX, y: e.clientY, node, moved: false,
+                  becameFree: !freeMode(),
+                  left: parseFloat(node.style.left), top: parseFloat(node.style.top) };
+        capture(cv, e); e.preventDefault(); return;
+      }
+    }
     const refNode = t.closest('.refcard');
     if (refNode) {
       if (t.closest('.grip')) {                                // the grip moves the node itself
@@ -828,7 +839,10 @@ function centerOn(id) {
     if (st.kind === 'node') {
       st.node.classList.remove('lifting');
       if (!st.moved) return;
-      try { await saveLayout(); } catch (err) { toast(err.message, true); }
+      try {
+        await saveLayout();
+        if (st.becameFree) toast('free placement on — order is the number badge (alt + ← →); “tidy” in the ⋯ menu puts the row back');
+      } catch (err) { toast(err.message, true); }
       layout();
       return;
     }
@@ -1698,6 +1712,7 @@ for (const [id, slot] of [['#lbGrabFirst', 'first'], ['#lbGrabLast', 'last']]) {
 /* --------------------------------------------------------------- keyboard */
 document.addEventListener('keydown', e => {
   if (e.key === ' ' && !typing()) { S.space = true; $('#canvas').classList.add('spacing'); if (e.target === document.body) e.preventDefault(); }
+  if (e.key === 'Control' || e.key === 'Meta') $('#canvas').classList.add('moving');
   if (e.key === 'Escape') {
     if (!$('#ask').hidden) { $('#askNo').click(); return; }
     if (S.lb) { closeLightbox(); return; }
@@ -1768,11 +1783,16 @@ function openHelp(anchor) {
   }
   d.append(el('h4', null, 'Arranging nodes'));
   const p = el('p', 'hint');
-  p.textContent = 'Drag a board by its head. Along the row that reorders the film; pull one down and the film switches to free placement, where a drag just moves the node and the number badge stays the film order. References move by the ⠿ grip. “tidy every node back into a row” in either ⋯ menu undoes the lot.';
+  p.textContent = 'Drag a board by its head. Along the row that reorders the film; pull one down and the film switches to free placement, where a drag just moves the node and the number badge stays the film order. Hold ctrl (or ⌘) and you can pick any node up from anywhere on it — over its title, its notes, its cards. References also move by the ⠿ grip. “tidy every node back into a row” in either ⋯ menu undoes the lot.';
   d.append(p);
   openPop(anchor, d, { below: true, wide: true });
 }
-document.addEventListener('keyup', e => { if (e.key === ' ') { S.space = false; $('#canvas').classList.remove('spacing'); } });
+document.addEventListener('keyup', e => {
+  if (e.key === ' ') { S.space = false; $('#canvas').classList.remove('spacing'); }
+  if (e.key === 'Control' || e.key === 'Meta') $('#canvas').classList.remove('moving');
+});
+// a keyup that lands in another window never arrives, so the cursor would stick
+window.addEventListener('blur', () => { S.space = false; $('#canvas').classList.remove('spacing', 'moving'); });
 $('#ask').addEventListener('pointerdown', e => { if (e.target.id === 'ask') $('#askNo').click(); });
 
 /* ----------------------------------------------------------------- wiring */

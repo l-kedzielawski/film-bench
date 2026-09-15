@@ -414,3 +414,7 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:#3d6b58}
 #bar .fold{margin:0;padding:2px 5px}
 #bar .fold:disabled{opacity:.25;cursor:default;border-color:transparent}
 #bar .fold:disabled:hover{color:var(--faint);border-color:transparent}
+
+/* ctrl (or ⌘) held: any node can be picked up from anywhere on it */
+#canvas.moving .board:not(.adder),#canvas.moving .refcard,
+#canvas.moving .board:not(.adder) *,#canvas.moving .refcard *{cursor:move}

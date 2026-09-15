@@ -201,7 +201,7 @@ document.getElementById('f').onload = async () => {
     return 'pct=' + q('#zoomPct').textContent + ' changed=' + (t0 !== t1) + ' fitChanged=' + (t1 !== q('#world').style.transform);
   });
   // ---- deleting, the film menu, free placement, scrolling inside a node ----
-  const pev = (type, x, y) => new win.PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, button: 0, isPrimary: true, pointerType: 'mouse' });
+  const pev = (type, x, y, extra) => new win.PointerEvent(type, Object.assign({ bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, button: 0, isPrimary: true, pointerType: 'mouse' }, extra || {}));
   const slide = (x, y) => q('#canvas').dispatchEvent(pev('pointermove', x, y));
   const key = k => d.dispatchEvent(new win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
   const setActive = id => win.setActive(id);
@@ -316,6 +316,45 @@ document.getElementById('f').onload = async () => {
     return 'stored bad {n:' + bad.n + ', res:' + JSON.stringify(bad.resolution) + '}' +
            ' -> clamped {n:' + now.n + ', res:' + JSON.stringify(now.resolution) + '}' +
            ' toast="' + q('#toast').textContent.slice(0, 54) + '"';
+  });
+
+  await T('ctrl + drag picks a node up from anywhere on it', async () => {
+    await closeAll();
+    await post(`/api/film/${FILM}/layout`, { reset: true });
+    await win.openFilm(FILM); await wait(1200);
+    q('#fit').click(); await wait(500);
+    const b = qa('.board:not(.adder)')[0];
+    const br = b.getBoundingClientRect();
+    const x = br.left + br.width * 0.5, y = br.top + 70;      // below the head, in the body
+    const under = d.elementFromPoint(x, y);
+    if (!under || !under.closest('.board')) return 'did not land on the board (' + (under && under.tagName) + ')';
+    if (under.closest('.bhead')) return 'landed on the head, which already worked';
+    under.dispatchEvent(pev('pointerdown', x, y, { ctrlKey: true })); await wait(60);
+    for (const dy of [70, 180, 300]) { q('#canvas').dispatchEvent(pev('pointermove', x + 90, y + dy)); await wait(50); }
+    q('#canvas').dispatchEvent(pev('pointerup', x + 90, y + 300)); await wait(1000);
+    const moved = (await get()).shots.filter(sh => sh.x != null).length;
+    // and the same spot without ctrl must still belong to whatever is under it
+    const was = (await get()).shots.find(sh => sh.id === b.dataset.id);
+    d.elementFromPoint(x, y).dispatchEvent(pev('pointerdown', x, y)); await wait(60);
+    for (const dy of [80, 200]) { q('#canvas').dispatchEvent(pev('pointermove', x + 60, y + dy)); await wait(50); }
+    q('#canvas').dispatchEvent(pev('pointerup', x + 60, y + 200)); await wait(800);
+    const now = (await get()).shots.find(sh => sh.id === b.dataset.id);
+    await post(`/api/film/${FILM}/layout`, { reset: true });
+    await win.openFilm(FILM); await wait(900);
+    return 'grabbed <' + under.tagName.toLowerCase() + '> | placed=' + moved + '/' + (await get()).shots.length +
+           ' | without ctrl unchanged=' + (was.x === now.x && was.y === now.y);
+  });
+
+  await T('linking a reference leaves its grip alone', async () => {
+    const n = q('.refcard');
+    if (!n) return 'no reference on this film';
+    const chip = qa('#barRefs .chip-m').find(c => c.textContent.trim().length);
+    if (!chip) return 'no reference chip in the bar';
+    const before = n.querySelector('.used').textContent.slice(0, 26);
+    chip.click(); await wait(900);
+    const mid = n.querySelector('.grip').textContent + ' / ' + n.querySelector('.used').textContent.slice(0, 26);
+    chip.click(); await wait(900);
+    return 'used "' + before + '" -> "' + mid + '" gripIntact=' + (n.querySelector('.grip').textContent === '⠿');
   });
 
   await T('the bar folds full -> compact -> strip -> hidden, and stops there', async () => {
