@@ -76,6 +76,9 @@ const S = {
   cat: { video: [], image: [] }, filter: '', showAll: false,
   view: { x: 60, y: 60, z: 1 }, side: { open: false, tab: 'take' },
   styleId: null, lb: null, drag: null, space: false,
+  root: '',                                    // where films/ lives on disk, for copyable paths
+  cmp: null,                                   // {shot, take} marked as side A
+  split: 50,                                   // where the A|B line sits, in %
   fold: 'full'                                 // 'full' | 'compact' | 'folded' — see foldBar()
 };
 try { S.fold = localStorage.getItem('fb.fold') || 'full'; } catch {}
@@ -92,7 +95,7 @@ const takeById = (s, id) => s && s.takes.find(t => t.id === id);
 /* ------------------------------------------------------------------- boot */
 async function boot() {
   const st = await api('GET', '/api/state');
-  S.armed = st.armed; paintArm(); paintSpend(st.spend);
+  S.armed = st.armed; S.root = st.root || ''; paintArm(); paintSpend(st.spend);
   st.jobs.forEach(j => S.jobs.set(j.id, j));
   loadCosts();
   fillModels();
@@ -379,6 +382,7 @@ function renderBoard(s, i) {
     grid.append(none);
   }
   s.takes.forEach(t => grid.append(renderCard(s, t)));
+  requestAnimationFrame(paintCompareMarks);
   b.append(grid);
   return b;
 }
@@ -402,7 +406,11 @@ function renderRef(r) {
   requestAnimationFrame(() => autosize(tag));
   const foot = el('div', 'rfoot');
   const grip = el('span', 'grip', '⠿'); grip.title = 'drag to move this node';
-  foot.append(grip);
+  const cp = el('button', 'tk-tag', 'path');
+  cp.title = 'copy this reference\u2019s path, to hand an agent the exact image';
+  cp.onclick = e => { e.stopPropagation(); copyText((S.root ? S.root.replace(/\/$/, '') + '/' : 'films/') + S.film.slug + '/' + r.file, r.name || r.id); };
+  cp.onpointerdown = e => e.stopPropagation();
+  foot.append(grip, cp);
   const used = el('span', 'used'); const paintUsed = () => { const u = refUsers(r); used.textContent = u.length ? `→ ${u.length} shot${u.length === 1 ? '' : 's'}` : 'not linked — drag onto a board'; };
   paintUsed();
   const saved = el('span', 'saved', 'saved');
@@ -484,6 +492,11 @@ function renderCard(s, t) {
   th.append(el('span', 'star', '★'));
   th.append(el('span', 'kind', t.ext === '.mp4' ? 'CLIP' : (t.style_name === 'edit' ? 'EDIT' : 'STILL')));
   const tags = el('div', 'tags');
+  const tag = el('button', 'tk-tag', takeTag(t));
+  tag.title = 'copy this take\u2019s path, to hand an agent the exact image';
+  tag.onclick = e => { e.stopPropagation(); copyText(takePath(s, t), takeTag(t)); };
+  tag.onpointerdown = e => e.stopPropagation();
+  tags.append(tag);
   tags.append(el('span', 'm', short(t.model) || '?'));
   if (t.style_name && t.style_name !== 'edit') tags.append(el('span', 's', t.style_name));
   tags.append(el('span', 'c' + (t.cost_usd == null ? ' dry' : ''), t.cost_usd != null ? `$${t.cost_usd}` : 'dry'));
@@ -510,6 +523,12 @@ function takeActions(s, t, media) {
       } });
   }
   acts.push({ label: 'edit', title: 'enlarge, paint a region, say what to change', run: () => openLightbox(s, t) });
+  const marked = S.cmp && S.cmp.take.id === t.id && S.cmp.shot.id === s.id;
+  acts.push({ label: marked ? '⇄ A set' : '⇄ A|B', on: marked,
+    title: marked ? 'this is side A — press again to drop it'
+      : S.cmp ? `compare against ${short(S.cmp.take.model)} — they meet at a line you drag`
+      : 'mark this as side A, then press ⇄ on another take to compare them',
+    run: () => markCompare(s, t) });
   acts.push({ label: '→ ref', title: 'turn this take into a reference image for other shots',
     run: async () => {
       const body = { from_take: { shot: s.id, take: t.id, time: isV && media ? media.currentTime : 0 }, name: `${short(t.model)}${t.style_name && t.style_name !== 'edit' ? ' · ' + t.style_name : ''}`, tag: 'Match this image.' };
@@ -1423,7 +1442,12 @@ function paintTake() {
   media.append(m); media.onclick = e => { if (t.ext !== '.mp4') openLightbox(s, t); };
   pane.append(media);
   const body = el('div', 'tk-body');
-  body.append(el('h3', 'tk-title', `${short(t.model)}`));
+  const h3 = el('h3', 'tk-title', `${short(t.model)}`);
+  const tag = el('button', 'tk-tag big', takeTag(t));
+  tag.title = 'copy this take\u2019s path, to hand an agent the exact image';
+  tag.onclick = () => copyText(takePath(s, t), takeTag(t));
+  h3.append(tag);
+  body.append(h3);
   const sub = el('div', 'tk-sub');
   sub.append(el('span', null, s.title || s.id));
   if (t.style_name) sub.append(el('span', 'st', t.style_name));
@@ -1467,7 +1491,10 @@ function paintTake() {
     d.append(box); body.append(d);
   }
   if (t.edit_of) sec('EDIT OF', t.edit_of + (t.masked ? '  (region-marked)' : ''), null, true);
-  sec('FILE', (t.file || '').replace('/media/', 'films/'), null, true);
+  const copyFile = el('button', 'ghost tiny', 'copy path');
+  copyFile.title = 'the absolute path, ready to paste at an agent';
+  copyFile.onclick = () => copyText(takePath(s, t), takeTag(t));
+  sec('FILE', takePath(s, t), copyFile, true);
   pane.append(body);
 }
 
@@ -1637,6 +1664,109 @@ function listen() {
   es.onerror = () => { /* EventSource reconnects on its own */ };
 }
 
+/* ---------------------------------------------------- naming and copying */
+/* Every take already ends in a short unique suffix — 20260915-100438-…-2a0.
+   Printed as #2a0 it is something you can say out loud and search for, which a
+   45-character filename is not. Clicking it copies the absolute path, because
+   the thing you are usually doing is telling an agent which image you mean. */
+const takeTag = t => '#' + String(t.id || '').split('-').pop();
+const takePath = (s, t) => {
+  const rel = (t.file || '').replace('/media/', '');
+  return S.root ? S.root.replace(/\/$/, '') + '/' + rel : 'films/' + rel;
+};
+async function copyText(text, what) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // clipboard API refused (insecure context, no permission) — do it the old way
+    const ta = el('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.append(ta); ta.select();
+    try { document.execCommand('copy'); } catch { toast('could not copy — ' + text, true); ta.remove(); return; }
+    ta.remove();
+  }
+  toast(`${what} copied — ${text.length > 64 ? '…' + text.slice(-58) : text}`);
+}
+
+/* ------------------------------------------------------------------- A | B */
+/* Two takes in one box with a line you drag between them. The comparison that
+   matters here is one prompt across models and styles, so A and B are not
+   restricted to the same shot — mark one anywhere, press ⇄ on another. */
+function markCompare(s, t) {
+  if (t.ext === '.mp4') { toast('A|B compares stills. Clips are the expensive step; judge the frame first.', true); return; }
+  if (S.cmp && S.cmp.take.id === t.id && S.cmp.shot.id === s.id) {
+    S.cmp = null; paintCompareMarks();
+    toast('side A dropped');
+    return;
+  }
+  if (!S.cmp) {
+    S.cmp = { shot: s, take: t }; paintCompareMarks();
+    toast(`${short(t.model)} is side A — press ⇄ on another take to compare`);
+    return;
+  }
+  const a = S.cmp; S.cmp = null; paintCompareMarks();
+  openCompare(a, { shot: s, take: t });
+}
+function paintCompareMarks() {
+  $$('#world .card').forEach(c => c.classList.toggle('cmpa',
+    !!S.cmp && c.dataset.take === S.cmp.take.id && c.dataset.shot === S.cmp.shot.id));
+}
+/* What is actually being compared: which model, in which look, for how much —
+   plus the shot, but only when the two sides come from different ones. */
+const cmpLabel = (p, other) =>
+  `${takeTag(p.take)} ${short(p.take.model)}` +
+  (p.take.style_name ? ' · ' + p.take.style_name : '') +
+  (p.take.cost_usd != null ? ` · $${p.take.cost_usd}` : '') +
+  (other && other.shot.id !== p.shot.id ? ` · ${p.shot.title || p.shot.id}` : '');
+
+function openCompare(a, b) {
+  S.lb = { cmp: { a, b }, video: false };
+  paintCompare();
+  $('#lb').hidden = false;
+}
+function paintCompare() {
+  const { a, b } = S.lb.cmp;
+  // take the lightbox over: no mask, no stepping, no edit box
+  $('#lbImg').hidden = true; $('#lbVid').hidden = true; $('#lbCanvas').hidden = true;
+  $('#lbFoot').hidden = true; $('#lbRefFoot').hidden = true;
+  $('#lbMaskTools').style.display = 'none';
+  $('#lbPrev').hidden = $('#lbNext').hidden = true;
+  $('#lbCmp').hidden = false; $('#lbCmpFoot').hidden = false;
+  $('#lbTitle').textContent = a.shot.id === b.shot.id
+    ? `${a.shot.title || a.shot.id} · A|B`
+    : `${a.shot.title || a.shot.id} vs ${b.shot.title || b.shot.id} · A|B`;
+  $('#lbCmpA').src = a.take.file; $('#lbCmpB').src = b.take.file;
+  $('#lbCmpTagA').textContent = 'A · ' + cmpLabel(a, b);
+  $('#lbCmpTagB').textContent = 'B · ' + cmpLabel(b, a);
+  setSplit(S.split);
+}
+function setSplit(pct) {
+  S.split = Math.max(0, Math.min(100, pct));
+  $('#lbCmp').style.setProperty('--split', S.split + '%');
+}
+
+(function comparedrag() {
+  const box = $('#lbCmp');
+  const to = e => {
+    const r = box.getBoundingClientRect();
+    setSplit(((e.clientX - r.left) / r.width) * 100);
+  };
+  box.addEventListener('pointerdown', e => {
+    if (!S.lb || !S.lb.cmp) return;
+    try { box.setPointerCapture(e.pointerId); } catch {}
+    box.dataset.dragging = '1'; to(e); e.preventDefault();
+  });
+  box.addEventListener('pointermove', e => { if (box.dataset.dragging) to(e); });
+  const stop = e => { delete box.dataset.dragging; try { box.releasePointerCapture(e.pointerId); } catch {} };
+  box.addEventListener('pointerup', stop);
+  box.addEventListener('pointercancel', stop);
+})();
+$('#lbCmpSwap').onclick = () => {
+  if (!S.lb || !S.lb.cmp) return;
+  S.lb.cmp = { a: S.lb.cmp.b, b: S.lb.cmp.a };
+  S.split = 100 - S.split;
+  paintCompare();
+};
+
 /* --------------------------------------------------------------- lightbox */
 /* Enlarge a take, paint over the part you want changed, and send it back as
    an edit. No image model on this API takes a mask, so the painted area is
@@ -1654,6 +1784,7 @@ function openLightbox(s, t) {
   $('#lbNote').textContent = ''; $('#lbInstr').value = '';
   const img = $('#lbImg'), vid = $('#lbVid'), cv = $('#lbCanvas');
   const simple = !!lb.plain || !!lb.ref;
+  $('#lbCmp').hidden = true; $('#lbCmpFoot').hidden = true;
   img.hidden = lb.video; vid.hidden = !lb.video; cv.hidden = lb.video || simple;
   $('#lbMaskTools').style.display = (lb.video || simple) ? 'none' : '';
   $('#lbFoot').hidden = simple;
@@ -1744,6 +1875,12 @@ document.addEventListener('keydown', e => {
     if (typing()) { document.activeElement.blur(); return; }
     if (S.sel) { S.sel = null; $$('#world .card.sel').forEach(c => c.classList.remove('sel')); if (S.side.open && S.side.tab === 'take') paintSide(); return; }
     if (S.side.open) { closeSide(); return; }
+  }
+  if (S.lb && S.lb.cmp && !typing()) {
+    const step = e.shiftKey ? 10 : 2;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); setSplit(S.split - step); return; }
+    if (e.key === 'ArrowRight') { e.preventDefault(); setSplit(S.split + step); return; }
+    if (e.key === ' ') { e.preventDefault(); setSplit(50); return; }
   }
   if (S.lb && !typing()) {
     if (e.key === 'ArrowLeft') lbStep(-1);

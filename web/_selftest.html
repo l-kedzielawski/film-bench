@@ -445,6 +445,52 @@ document.getElementById('f').onload = async () => {
     return 'used "' + before + '" -> "' + mid + '" gripIntact=' + (n.querySelector('.grip').textContent === '⠿');
   });
 
+  await T('A|B: mark one take, compare with another, drag the line', async () => {
+    await closeAll(); q('#fit').click(); await wait(600);
+    // A|B is stills only — a clip card carries a <video>, so skip those
+    const cards = qa('.card:not(.ghost)').filter(c => !c.querySelector('video'));
+    if (cards.length < 2) return 'needs two stills on screen, have ' + cards.length;
+    const pick = c => { const r = c.querySelector('.thumb').getBoundingClientRect();
+      const x = r.left + r.width / 2, y = r.top + r.height / 2;
+      d.elementFromPoint(x, y).dispatchEvent(pev('pointerdown', x, y));
+      q('#canvas').dispatchEvent(pev('pointerup', x, y)); };
+    const ab = () => qa('.card.sel .ctools button').find(b => b.textContent.trim().startsWith('⇄'));
+    pick(cards[0]); await wait(500);
+    const first = q('.card.sel') && q('.card.sel').dataset.take;
+    if (!ab()) return 'no ⇄ on the toolbar';
+    ab().click(); await wait(400);
+    const marked = qa('.card.cmpa').length;
+    pick(cards[1]); await wait(500);
+    const second = q('.card.sel') && q('.card.sel').dataset.take;
+    if (first === second) return 'both picks hit the same card — it was not on screen';
+    ab().click(); await wait(800);
+    const opened = !q('#lb').hidden && !q('#lbCmp').hidden;
+    const twoFiles = q('#lbCmpA').src !== q('#lbCmpB').src;
+    const box = q('#lbCmp'), r = box.getBoundingClientRect();
+    box.dispatchEvent(pev('pointerdown', r.left + r.width * 0.8, r.top + r.height / 2));
+    box.dispatchEvent(pev('pointerup', r.left + r.width * 0.8, r.top + r.height / 2));
+    await wait(300);
+    const split = win.getComputedStyle(box).getPropertyValue('--split').trim();
+    key(' '); await wait(200);
+    const centred = win.getComputedStyle(box).getPropertyValue('--split').trim();
+    const tagA = q('#lbCmpTagA').textContent;
+    q('#lbCmpSwap').click(); await wait(300);
+    const swapped = q('#lbCmpTagA').textContent !== tagA;
+    key('Escape'); await wait(300);
+    return 'markedA=' + marked + ' opened=' + opened + ' twoFiles=' + twoFiles +
+           ' | drag -> ' + split + ' space -> ' + centred + ' | swapped=' + swapped +
+           ' | A="' + tagA.slice(0, 40) + '" | closed=' + q('#lb').hidden;
+  });
+
+  await T('every take carries a short handle that copies its path', async () => {
+    const tags = qa('.card .tk-tag');
+    if (!tags.length) return 'no takes on this film';
+    const shapes = tags.map(t => t.textContent).slice(0, 4);
+    const ok = shapes.every(x => /^#[0-9a-f]{2,4}$/.test(x));
+    return tags.length + ' handles ' + shapes.join(' ') + ' wellFormed=' + ok +
+           ' | refs also offer one: ' + qa('.refcard .tk-tag').length;
+  });
+
   await T('the bar folds full -> compact -> strip -> hidden, and stops there', async () => {
     await closeAll();
     const bar = q('#bar'), fold = q('#barFold'), up = q('#barUnfold'), state = () => bar.className || 'full';

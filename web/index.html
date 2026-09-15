@@ -174,12 +174,26 @@ window.addEventListener('error', e => {
     <button id="lbClose" class="ghost">close ✕</button>
   </div>
   <div class="lb-stage">
+    <!-- A|B: both stills in one box, object-fit contain so they line up exactly,
+         and B clipped from the left by the split so the two meet at the line -->
+    <div id="lbCmp" hidden>
+      <img id="lbCmpA" alt="">
+      <img id="lbCmpB" alt="">
+      <div id="lbCmpLine"><span class="grab"></span></div>
+      <span class="cmp-tag a" id="lbCmpTagA"></span>
+      <span class="cmp-tag b" id="lbCmpTagB"></span>
+    </div>
     <img id="lbImg" alt="" hidden>
     <video id="lbVid" controls hidden></video>
     <canvas id="lbCanvas" hidden></canvas>
   </div>
   <!-- a reference opened large: change its picture, its name or what to take
        from it, without losing the id every board links to -->
+  <div class="lb-foot" id="lbCmpFoot" hidden>
+    <span class="hint">Drag the line, or use <kbd>←</kbd> <kbd>→</kbd>. <kbd>Space</kbd> jumps it to the middle.</span>
+    <span class="grow"></span>
+    <button id="lbCmpSwap" class="ghost">swap sides</button>
+  </div>
   <div class="lb-foot" id="lbRefFoot" hidden>
     <div class="lb-reffields">
       <input id="lbRefName" placeholder="name">

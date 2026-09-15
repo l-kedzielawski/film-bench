@@ -95,6 +95,16 @@ Models that accept a first frame only are marked in the picker, and the bar warn
 
 `chain` on a clip does the same thing after the fact: it extracts the clip's real last frame into the next board as its first frame, recovering continuity from whatever the model produced.
 
+## A | B
+
+Two takes of the same prompt, one box, a line you drag between them — which is the comparison that actually matters here, one prompt across models and styles. Press `⇄ A|B` on a card to mark it as side A, then `⇄` on another take to open the pair. They do not have to be from the same shot.
+
+Drag the line, or nudge it with `←` `→` (`shift` for bigger steps); `Space` puts it back in the middle, and **swap sides** exchanges them. Each side is labelled with its handle, model, style and what it cost, so the thing you are judging and the thing you are paying for are on screen together. Stills only: clips are the expensive step, and the frame is what you judge first.
+
+## Names you can paste
+
+Every take ends in a short unique handle — `#2a0`, `#185` — printed on its card, in the Take panel and on both sides of an A|B. It is something you can say out loud and search for, which a 45-character filename is not. Clicking a handle copies the take's **absolute path**, ready to paste at an agent: *use this image*, *this one is fine, let us go with it*. References carry the same `path` button in their footer, and the Take panel has **copy path** next to the file.
+
 ## Editing a still
 
 Enlarge a card, paint over the part to change, and say what should happen there: change this and this, leave the rest. The painted region limits the edit; the rest of the image comes back untouched.
@@ -162,6 +172,8 @@ gen spend                               key usage and what is left
 | F, or double-click the background | fit the whole film |
 | Space + drag | pan, even over a board |
 | Ctrl + drag | move a node from anywhere on it |
+| Left / Right | in an A\|B, nudge the line; Shift for bigger steps |
+| Space | in an A\|B, put the line back in the middle |
 | Ctrl + wheel | zoom around the cursor |
 | Esc | close dialog, lightbox, popover, selection, panel, in that order |
 | Left / Right | previous or next shot — or previous or next take, in the lightbox |

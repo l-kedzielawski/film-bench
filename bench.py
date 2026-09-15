@@ -732,8 +732,10 @@ class H(BaseHTTPRequestHandler):
                 with JOBS_LOCK:
                     jobs = [job_public(j) for j in sorted(JOBS.values(),
                             key=lambda j: j['started'], reverse=True)[:25]]
+                # the canvas hands out absolute paths to copy at an agent, which
+                # has no idea where this bench is checked out
                 return self._json(200, {'films': list_films(), 'armed': ARMED,
-                                        'spend': spend(), 'jobs': jobs})
+                                        'spend': spend(), 'jobs': jobs, 'root': FILMS})
             if path == '/api/price':
                 qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
                 out = {}
