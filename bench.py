@@ -216,6 +216,51 @@ def list_takes(slug, shot_id):
     return takes
 
 
+def gallery():
+    """Every take across every film, newest first.
+
+    The canvas is per film and per shot, which is right while you are making a
+    shot and wrong when you are looking for the one good still you remember
+    from last week. Reads the same sidecars the canvas does — no second index
+    to fall out of step with the files."""
+    out = []
+    for meta in list_films():
+        slug = meta['slug']
+        try:
+            film = load_film(slug)
+        except (OSError, ValueError):
+            continue
+        for shot in film.get('shots', []):
+            for t in shot.get('takes', []):
+                out.append({
+                    'film': slug, 'film_title': film.get('title') or slug,
+                    'shot': shot['id'], 'shot_title': shot.get('title') or shot['id'],
+                    'id': t.get('id'), 'file': t.get('file'), 'poster': t.get('poster'),
+                    'ext': t.get('ext'), 'model': t.get('model'), 'style_name': t.get('style_name'),
+                    'cost_usd': t.get('cost_usd'), 'at': t.get('at'), 'fav': bool(t.get('fav')),
+                    'picked': shot.get('selected_take') == t.get('id'),
+                    'prompt': t.get('content_prompt') or t.get('prompt') or '',
+                })
+    out.sort(key=lambda t: t.get('at') or '', reverse=True)
+    return out
+
+
+def set_fav(slug, shot_id, take_id, fav):
+    """A star lives in the take's own sidecar, so it travels with the file and
+    dies with it. A separate index would outlive deleted takes and drift."""
+    path = os.path.join(takes_dir(slug, shot_id), os.path.basename(take_id) + '.json')
+    if not os.path.exists(path):
+        raise ValueError('no such take')
+    with open(path, encoding='utf-8') as f:
+        side = json.load(f)
+    if fav:
+        side['fav'] = True
+    else:
+        side.pop('fav', None)
+    atomic_write(path, json.dumps(side, ensure_ascii=False, indent=2) + '\n')
+    return bool(side.get('fav'))
+
+
 def compose(style_prompt, content):
     """Fold a style prompt and a content prompt into the one string sent out.
 
@@ -720,6 +765,11 @@ class H(BaseHTTPRequestHandler):
         try:
             if path == '/' or path == '/index.html':
                 return self._file(os.path.join(WEB, 'index.html'))
+            if path == '/gallery':
+                return self._file(os.path.join(HERE, 'web', 'gallery.html'))
+            if path == '/api/gallery':
+                return self._json(200, {'takes': gallery(), 'root': FILMS,
+                                        'films': list_films()})
             if path == '/agent':
                 return self._html(agent_page())
             if path == '/skill.md':
@@ -987,6 +1037,12 @@ class H(BaseHTTPRequestHandler):
                 save_film(film)
                 publish('film.changed', {'slug': m.group(1)})
                 return self._json(200, {'ok': True})
+
+            m = re.fullmatch(r'/api/film/([a-z0-9-]+)/shot/([a-z0-9-]+)/take/([\w.-]+)/fav', path)
+            if m:
+                fav = set_fav(m.group(1), m.group(2), m.group(3), bool(body.get('fav')))
+                publish('film.changed', {'slug': m.group(1), 'shot': m.group(2)})
+                return self._json(200, {'fav': fav})
 
             m = re.fullmatch(r'/api/film/([a-z0-9-]+)/shot/([a-z0-9-]+)/take/([\w.-]+)/delete', path)
             if m:

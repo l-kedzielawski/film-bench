@@ -95,6 +95,14 @@ Models that accept a first frame only are marked in the picker, and the bar warn
 
 `chain` on a clip does the same thing after the fact: it extracts the clip's real last frame into the next board as its first frame, recovering continuity from whatever the model produced.
 
+## The gallery
+
+`gallery` in the top bar is every take the bench has ever made, newest first, across every film — the other half of a canvas that is deliberately one shot at a time. Search by model, style, shot, film or prompt; narrow by film, by model, or to stills or clips; and star the ones worth keeping. The header keeps a running count and what the visible selection cost.
+
+A star lives in the take's own sidecar, so it travels with the file and dies with it. There is no favourites index to outlive a deleted take and drift.
+
+Click a picture to enlarge it with the prompt that made it. Every card carries the same `name` and `path` buttons as the canvas, and a link back to the film it came from.
+
 ## A | B
 
 Two takes of the same prompt, one box, a line you drag between them — which is the comparison that actually matters here, one prompt across models and styles. Press `⇄ A|B` on a card to mark it as side A, then `⇄` on another take to open the pair. They do not have to be from the same shot.

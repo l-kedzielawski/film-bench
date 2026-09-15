@@ -31,6 +31,7 @@ window.addEventListener('error', e => {
   </div>
   <span class="grow"></span>
   <button id="running" class="pill" hidden>● 0 running</button>
+  <a id="galleryLink" class="ghost" href="/gallery" title="every take across every film, with favourites">gallery</a>
   <a id="agentLink" class="ghost" href="/agent" target="_blank" title="connect an agent: MCP snippet + the skill, with this bench's paths filled in">agent</a>
   <button id="help" class="ghost" title="keyboard shortcuts  (?)">?</button>
   <button id="stylesBtn" class="ghost" title="the looks — one per lane">styles</button>
@@ -167,6 +168,15 @@ window.addEventListener('error', e => {
     <button id="lbNext" class="ghost" title="next take  (→)">→</button>
     <b id="lbTitle"></b>
     <span class="grow"></span>
+    <span id="lbBgTools" title="what sits behind the picture — only changes how you view it, never the file">
+      <span class="cb">bg</span>
+      <button class="bgsw checker" data-bg="checker" title="transparency (checkerboard)"></button>
+      <button class="bgsw" data-bg="#ffffff" style="background:#ffffff" title="white"></button>
+      <button class="bgsw" data-bg="#d8d8d8" style="background:#d8d8d8" title="light grey"></button>
+      <button class="bgsw" data-bg="#808080" style="background:#808080" title="mid grey — the honest one for judging value"></button>
+      <button class="bgsw" data-bg="#111318" style="background:#111318" title="bench dark"></button>
+      <button class="bgsw" data-bg="#000000" style="background:#000000" title="black"></button>
+    </span>
     <span id="lbMaskTools">
       <label class="cb">brush <input id="lbBrush" type="range" min="10" max="220" value="60"></label>
       <button id="lbClear" class="ghost">clear mask</button>
