@@ -607,11 +607,12 @@ def spend():
     return data
 
 
-def model_limits(kind):
-    """What each model will actually accept — n range, resolutions, aspects, how
-    many references. Published by the catalogue and otherwise thrown away, which
-    is why an n of 2 on a model capped at 1 could only be discovered by paying
-    for the 400."""
+def model_meta(kind):
+    """Per model: what it will actually accept — n range, resolutions, aspects,
+    how many references — and what the catalogue calls it. The limits were being
+    thrown away, which is why an n of 2 on a model capped at 1 could only be
+    discovered by paying for the 400; the name was too, which is why a model
+    listed as "MiniMax: H3" could only be found by knowing its id is hailuo-3."""
     try:
         r = subprocess.run([sys.executable, GEN, 'models', kind, '--json'], cwd=PROJECT,
                            capture_output=True, text=True, timeout=60,
@@ -630,8 +631,7 @@ def model_limits(kind):
                     lim[key] = enum['values']
             if m.get('supports_streaming') is not None:
                 lim['streaming'] = bool(m['supports_streaming'])
-            if lim:
-                out[m['id']] = lim
+            out[m['id']] = {'limits': lim, 'name': m.get('name') or ''}
         return out
     except (OSError, subprocess.SubprocessError, ValueError):
         return {}
@@ -657,17 +657,19 @@ def models(kind):
                              'frames': fm.group(1).split(',') if fm else []})
     except (OSError, subprocess.SubprocessError):
         pass
-    limits = model_limits(kind)
+    meta = model_meta(kind)
     picks = PICKS_VIDEO if kind == 'video' else PICKS_IMAGE
     have = {r['id'] for r in rows}
     for r in rows:
         r['pick'] = r['id'] in picks
-        r['limits'] = limits.get(r['id']) or {}
+        m = meta.get(r['id']) or {}
+        r['limits'] = m.get('limits') or {}
+        r['name'] = m.get('name') or ''
     # picked models first, in the order above; everything else alphabetical after
     rows.sort(key=lambda r: (picks.index(r['id']) if r['id'] in picks else 999, r['id']))
     for missing in [p for p in picks if p not in have]:
         rows.insert(0, {'id': missing, 'note': '(not in the live catalogue)', 'price': None,
-                        'frames': [], 'pick': True, 'gone': True, 'limits': {}})
+                        'frames': [], 'pick': True, 'gone': True, 'limits': {}, 'name': ''})
     MODELS[kind] = (time.time(), rows)
     return rows
 

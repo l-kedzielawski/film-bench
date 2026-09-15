@@ -56,6 +56,27 @@ document.getElementById('f').onload = async () => {
     d.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(150);
     return 'open=' + open + ' chips=' + chips + ' ' + was + '->' + now + '->' + back + ' closedOnEsc=' + q('#pop').hidden;
   });
+  const esc = () => d.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await T('the picker finds a model by its catalogue name, not only its id', async () => {
+    esc(); await wait(120);
+    if (!qa('.mode')[1].classList.contains('on')) { qa('.mode')[1].click(); await wait(400); }
+    q('#pickModels').click(); await wait(400);
+    const chips = () => qa('#pop .chip-m').map(c => c.textContent.trim());
+    const f = q('#pop .filter');
+    const byName = (v) => { f.value = v; f.dispatchEvent(new win.Event('input', { bubbles: true })); };
+    byName('h3'); await wait(300);
+    const hits = chips();
+    byName('hailuo-3'); await wait(300);
+    const byId = chips();
+    byName(''); await wait(200);
+    const named = qa('#pop .chip-m .nm').length;
+    esc(); await wait(150);
+    qa('.mode')[0].click(); await wait(300);
+    // minimax/hailuo-3 is listed as "MiniMax: H3" — the id and the name share no words
+    return '"h3" -> [' + hits.join(' | ') + '] | same by id=' + (JSON.stringify(hits) === JSON.stringify(byId)) +
+           ' | chips showing a name=' + named;
+  });
+
   await T('style chip toggles and saves', async () => {
     const chip = q('#barStyles .chip-m'); const was = chip.classList.contains('on');
     chip.click(); await wait(500);

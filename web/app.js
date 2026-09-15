@@ -19,6 +19,11 @@ const api = async (m, p, b) => {
 };
 const slugify = (s, n) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, n);
 const short = id => (id || '').split('/').pop();
+/* What the catalogue calls a model, minus the vendor the id already carries:
+   "MiniMax: H3" -> "H3". Shown next to the id because the two often share no
+   words at all — hailuo-3 is H3 — so neither alone is enough to find it by. */
+const modelName = m => ((m && m.name) || '').split(': ').pop().trim();
+const nameAdds = m => { const n = modelName(m); const k = x => x.toLowerCase().replace(/[^a-z0-9]/g, ''); return n && k(n) !== k(short(m.id)); };
 // setPointerCapture throws on a pointer that is already gone (or synthetic); never let that abort a handler
 const capture = (n, e) => { try { n.setPointerCapture(e.pointerId); } catch {} };
 const typing = () => {
@@ -1088,7 +1093,7 @@ function openModelPicker(anchor) {
   const wrap = el('div');
   const head = el('div', 'pop-head');
   head.append(el('span', null, kind === 'video' ? 'VIDEO MODELS' : 'IMAGE MODELS'));
-  const filter = el('input', 'filter'); filter.placeholder = 'filter the catalogue…'; filter.value = S.filter;
+  const filter = el('input', 'filter'); filter.placeholder = 'filter by id or name — “h3”, “veo”, “seedream”…'; filter.value = S.filter;
   const picks = el('button', 'ghost tiny', 'picks'), none = el('button', 'ghost tiny', 'none');
   const all = el('label', 'cb'); const cb = el('input'); cb.type = 'checkbox'; cb.checked = S.showAll; all.append(cb, document.createTextNode('show all'));
   head.append(filter, picks, none, all);
@@ -1099,14 +1104,15 @@ function openModelPicker(anchor) {
     const set = new Set(chosen()), q = S.filter.toLowerCase();
     let rows = S.cat[kind] || [];
     if (!S.showAll) rows = rows.filter(m => m.pick || set.has(m.id));
-    if (q) rows = rows.filter(m => m.id.toLowerCase().includes(q));
+    if (q) rows = rows.filter(m => (m.id + ' ' + (m.name || '')).toLowerCase().includes(q));
     if (!rows.length) chips.append(el('p', 'hint', 'Nothing matches.'));
     rows.forEach(m => {
       const c = el('div', 'chip-m' + (set.has(m.id) ? ' on' : '') + (m.gone ? ' gone' : ''));
       c.append(el('span', null, short(m.id)));
+      if (nameAdds(m)) c.append(el('span', 'nm', modelName(m)));
       if (m.price) c.append(el('span', 'p', `$${m.price}/s`));
       if (kind === 'video' && m.frames && m.frames.length && !m.frames.includes('last')) c.append(el('span', 'nf', 'first only'));
-      c.title = m.id + (m.note ? '\n' + m.note : '');
+      c.title = (m.name ? m.name + '\n' : '') + m.id + (m.note ? '\n' + m.note : '');
       c.onclick = async () => { const next = new Set(chosen()); next.has(m.id) ? next.delete(m.id) : next.add(m.id); await setModels([...next]); paint(); };
       chips.append(c);
     });

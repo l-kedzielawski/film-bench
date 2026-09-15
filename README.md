@@ -115,6 +115,8 @@ Every estimate says where its number comes from, because stills and clips are pr
 
 The numbers show up before you press anything (the cost line under the prompt), on each job in Activity, in the log itself, and as one toast per fan-out when every job in it has finished.
 
+The model picker searches on both the id and the name the catalogue publishes, and shows the name beside the id wherever the two differ — `minimax/hailuo-3` is listed as **MiniMax: H3**, and the two share no words, so neither alone is enough to find it by.
+
 **The bar offers only the parameters the picked model accepts.** The catalogue publishes real per-model limits — images per call, allowed resolutions and aspect ratios, how many references — and the still params read them: `n` is capped and greyed out at a model that makes one image per call, `res` and `aspect` are populated from that model's own list, and a parameter only some of the picked models understand is not offered at all, since the same request goes to every one of them. It is a clamp, not a label: a value already stored outside the limits is pulled back inside when you open the film or land on the shot, with a line saying what changed. Asking a model capped at one image for two is an HTTP 400 you would otherwise discover by paying for it.
 
 ![Activity: the live log of each call, with the estimate or the real charge on every job](docs/screenshots/activity.webp)

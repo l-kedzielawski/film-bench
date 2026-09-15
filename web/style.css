@@ -426,3 +426,7 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:#3d6b58}
 .lb-reffields textarea{resize:vertical;min-height:52px;font-size:12.5px;padding:6px 8px;
   background:#111316;border-color:var(--line)}
 #lbRefFoot .lb-go{display:flex;flex-direction:column;gap:6px;width:150px;flex:none}
+
+/* the catalogue's own name for a model, when the id does not give it away */
+.chip-m .nm{color:var(--blue);font-size:10px}
+.chip-m.on .nm{color:#7fb0d8}
