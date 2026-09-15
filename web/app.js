@@ -384,7 +384,7 @@ function refUsers(r) { return S.film.shots.filter(s => (s.refs || []).includes(r
 function renderRef(r) {
   const n = el('div', 'refcard'); n.dataset.ref = r.id;
   const th = el('div', 'rthumb'); const img = el('img'); img.src = refUrl(r); img.alt = r.name || r.id;
-  th.append(img, el('span', 'kind', 'REF')); th.title = 'drag onto a board to link it';
+  th.append(img, el('span', 'kind', 'REF')); th.title = 'drag onto a board to link it · double-click to open it and change the picture';
   n.append(th);
   const name = el('input', 'rname'); name.value = r.name || ''; name.placeholder = 'name';
   n.append(name);
@@ -852,6 +852,11 @@ function centerOn(id) {
       if (st.moved && board) {
         const s = S.film.shots.find(x => x.id === board.dataset.id);
         if (s) { await toggleRef(s, st.node.dataset.ref); toast((s.refs || []).includes(st.node.dataset.ref) ? `linked to ${s.title || s.id}` : `unlinked from ${s.title || s.id}`); }
+        return;
+      }
+      if (!st.moved && tap('ref:' + st.node.dataset.ref)) {
+        const r = refById(st.node.dataset.ref);
+        if (r) openLightbox({ ref: r });
       }
       return;
     }
@@ -1629,19 +1634,29 @@ function listen() {
    communicated by sending a marked copy alongside the clean original — see
    mark_region() in bench.py. ← → step through the shot's takes. */
 function openLightbox(s, t) {
-  if (s && s.plain) { S.lb = { plain: s, video: !!s.video }; }
+  if (s && s.ref) { S.lb = { ref: s.ref, video: false }; }
+  else if (s && s.plain) { S.lb = { plain: s, video: !!s.video }; }
   else S.lb = { take: t, shot: s, video: t.ext === '.mp4', list: s.takes, idx: s.takes.indexOf(t) };
   const lb = S.lb;
-  const title = lb.plain ? lb.plain.title : `${s.title || s.id} · ${short(t.model)}${t.style_name ? ' · ' + t.style_name : ''}${t.cost_usd != null ? ' · $' + t.cost_usd : ''}`;
+  const title = lb.ref ? `${lb.ref.name || lb.ref.id} · reference`
+    : lb.plain ? lb.plain.title
+    : `${s.title || s.id} · ${short(t.model)}${t.style_name ? ' · ' + t.style_name : ''}${t.cost_usd != null ? ' · $' + t.cost_usd : ''}`;
   $('#lbTitle').textContent = title;
   $('#lbNote').textContent = ''; $('#lbInstr').value = '';
   const img = $('#lbImg'), vid = $('#lbVid'), cv = $('#lbCanvas');
-  img.hidden = lb.video; vid.hidden = !lb.video; cv.hidden = lb.video || !!lb.plain;
-  $('#lbMaskTools').style.display = (lb.video || lb.plain) ? 'none' : '';
-  $('#lbFoot').hidden = !!lb.plain;
-  $('#lbPrev').hidden = $('#lbNext').hidden = !!lb.plain || (lb.list || []).length < 2;
+  const simple = !!lb.plain || !!lb.ref;
+  img.hidden = lb.video; vid.hidden = !lb.video; cv.hidden = lb.video || simple;
+  $('#lbMaskTools').style.display = (lb.video || simple) ? 'none' : '';
+  $('#lbFoot').hidden = simple;
+  $('#lbRefFoot').hidden = !lb.ref;
+  $('#lbPrev').hidden = $('#lbNext').hidden = simple || (lb.list || []).length < 2;
   $('#lbGrabFirst').hidden = $('#lbGrabLast').hidden = !lb.video;
-  const file = lb.plain ? lb.plain.file : t.file;
+  if (lb.ref) {
+    $('#lbRefName').value = lb.ref.name || '';
+    $('#lbRefTag').value = lb.ref.tag || '';
+    $('#lbRefNote').textContent = (() => { const u = refUsers(lb.ref); return u.length ? `sent by ${u.length} shot${u.length === 1 ? '' : 's'}` : 'not linked to any board yet'; })();
+  }
+  const file = lb.ref ? refUrl(lb.ref) + '?t=' + Date.now() : lb.plain ? lb.plain.file : t.file;
   if (lb.video) { vid.src = file; vid.currentTime = 0; vid.play().catch(() => {}); }
   else {
     img.src = file;
@@ -1848,6 +1863,33 @@ $('#stitch').onclick = async () => {
   } catch (e) { toast(e.message, true); }
   btn.disabled = false; btn.textContent = 'stitch';
 };
+/* The reference lightbox. Replacing the picture keeps the node — its id is what
+   every linked board points at, so deleting and re-adding would silently unlink
+   it everywhere and lose the tag. */
+$('#lbRefReplace').onclick = () => $('#lbRefFile').click();
+$('#lbRefFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  const lb = S.lb; if (!f || !lb || !lb.ref) return;
+  $('#lbRefNote').textContent = 'replacing…';
+  try {
+    const data = await new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(f); });
+    await api('POST', `/api/film/${S.film.slug}/refs`, { id: lb.ref.id, data });
+    await reload();
+    const r = refById(lb.ref.id);
+    if (r) openLightbox({ ref: r });
+    toast(`“${(r && r.name) || lb.ref.id}” now uses ${f.name} — every board that sends it picks the new image up`);
+  } catch (err) { $('#lbRefNote').textContent = ''; toast(err.message, true); }
+};
+$('#lbRefSave').onclick = async () => {
+  const lb = S.lb; if (!lb || !lb.ref) return;
+  try {
+    await api('POST', `/api/film/${S.film.slug}/refs`, { id: lb.ref.id, name: $('#lbRefName').value, tag: $('#lbRefTag').value });
+    await reload();
+    const r = refById(lb.ref.id); if (r) { lb.ref = r; $('#lbTitle').textContent = `${r.name || r.id} · reference`; }
+    $('#lbRefNote').textContent = 'saved';
+  } catch (err) { toast(err.message, true); }
+};
+
 $('#barFold').onclick = () => foldBar(1);
 $('#barUnfold').onclick = () => foldBar(-1);
 $('#barShow').onclick = () => setFold('full');

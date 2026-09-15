@@ -118,11 +118,11 @@ def publish(event, payload):
             CLIENTS.discard(q)
 
 
-def atomic_write(path, text):
+def atomic_write(path, data, binary=False):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        f.write(text)
+    with open(tmp, 'wb' if binary else 'w', **({} if binary else {'encoding': 'utf-8'})) as f:
+        f.write(data)
     os.replace(tmp, path)
 
 
@@ -1196,12 +1196,26 @@ def start_edit(slug, shot_id, body):
     return jobs
 
 
+def decode_image(data):
+    """A data URL in, (bytes, extension) out. Raises on anything that is not one."""
+    m = re.match(r'data:(image/[a-z+]+);base64,(.+)$', data or '', re.S)
+    if not m:
+        raise ValueError('send an image as a data URL')
+    ext = {'image/jpeg': '.jpg', 'image/png': '.png',
+           'image/webp': '.webp', 'image/gif': '.gif'}.get(m.group(1), '.png')
+    raw = base64.b64decode(m.group(2))
+    if len(raw) > 25 * 1024 * 1024:
+        raise ValueError('reference images are capped at 25 MB')
+    return raw, ext
+
+
 def save_ref(slug, body):
     """Create, retag or delete a reference image.
 
     body: {data: dataURL, name, tag}            upload
           {from_take: {shot, take}, name, tag}  a take becomes a reference
           {id, name?, tag?}                     rename or retag
+          {id, data: dataURL}                   swap the picture, keep the node
           {id, delete: true}                    remove it and unlink every shot
     Files live in films/<slug>/refs/; the film lists them in order and shots
     hold a list of ids, so one image can feed several boards.
@@ -1224,6 +1238,20 @@ def save_ref(slug, body):
                 if sh.get('refs'):
                     sh['refs'] = [x for x in sh['refs'] if x != rid]
         else:
+            if body.get('data'):
+                # Swap the picture under an existing node. Deleting and re-adding
+                # would lose the tag and unlink it from every board that sends it;
+                # the id is what those links point at, so the id has to survive.
+                raw, ext = decode_image(body['data'])
+                old = ref_path(slug, ref)
+                rel = os.path.join('refs', rid + ext)
+                atomic_write(os.path.join(film_dir(slug), rel), raw, binary=True)
+                if os.path.abspath(old) != os.path.abspath(os.path.join(film_dir(slug), rel)):
+                    try:
+                        os.remove(old)
+                    except OSError:
+                        pass
+                ref['file'] = rel
             for k in ('name', 'tag'):
                 if k in body:
                     ref[k] = body[k]
@@ -1249,14 +1277,9 @@ def save_ref(slug, body):
             rel = os.path.join('refs', rid + os.path.splitext(src)[1])
             shutil.copyfile(src, os.path.join(film_dir(slug), rel))
     else:
-        data = body.get('data') or ''
-        m = re.match(r'data:(image/[a-z+]+);base64,(.+)$', data, re.S)
-        if not m:
+        if not body.get('data'):
             raise ValueError('send an image as a data URL, or from_take')
-        ext = {'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif'}.get(m.group(1), '.png')
-        raw = base64.b64decode(m.group(2))
-        if len(raw) > 25 * 1024 * 1024:
-            raise ValueError('reference images are capped at 25 MB')
+        raw, ext = decode_image(body['data'])
         rel = os.path.join('refs', rid + ext)
         with open(os.path.join(film_dir(slug), rel), 'wb') as f:
             f.write(raw)

@@ -178,6 +178,20 @@ window.addEventListener('error', e => {
     <video id="lbVid" controls hidden></video>
     <canvas id="lbCanvas" hidden></canvas>
   </div>
+  <!-- a reference opened large: change its picture, its name or what to take
+       from it, without losing the id every board links to -->
+  <div class="lb-foot" id="lbRefFoot" hidden>
+    <div class="lb-reffields">
+      <input id="lbRefName" placeholder="name">
+      <textarea id="lbRefTag" rows="2" placeholder="What to take from it. It goes into the prompt, numbered."></textarea>
+    </div>
+    <div class="lb-go">
+      <button id="lbRefReplace" class="ghost">Replace image…</button>
+      <button id="lbRefSave">Save</button>
+      <span id="lbRefNote" class="hint"></span>
+    </div>
+    <input id="lbRefFile" type="file" accept="image/*" hidden>
+  </div>
   <div class="lb-foot" id="lbFoot">
     <textarea id="lbInstr" rows="2" placeholder="What to change. Paint over an area first to limit it — otherwise the whole image is fair game."></textarea>
     <div class="lb-go">

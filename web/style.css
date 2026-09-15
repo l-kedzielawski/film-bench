@@ -418,3 +418,11 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:#3d6b58}
 /* ctrl (or ⌘) held: any node can be picked up from anywhere on it */
 #canvas.moving .board:not(.adder),#canvas.moving .refcard,
 #canvas.moving .board:not(.adder) *,#canvas.moving .refcard *{cursor:move}
+
+/* the reference lightbox: its name, its tag, and a way to swap the picture */
+#lbRefFoot{display:flex;gap:14px;align-items:flex-start}
+.lb-reffields{flex:1;display:flex;flex-direction:column;gap:6px;min-width:0}
+.lb-reffields input{font-size:13px;padding:6px 8px;background:#111316;border-color:var(--line)}
+.lb-reffields textarea{resize:vertical;min-height:52px;font-size:12.5px;padding:6px 8px;
+  background:#111316;border-color:var(--line)}
+#lbRefFoot .lb-go{display:flex;flex-direction:column;gap:6px;width:150px;flex:none}

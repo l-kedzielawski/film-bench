@@ -51,6 +51,8 @@ The dry-run command shows one `--ref` per image, and the take's sidecar records 
 
 ![A reference node wired to the second board, with the composed prompt showing the numbered block](docs/screenshots/references.webp)
 
+**Double-click a reference** to open it large. Its name and what to take from it are editable there with room to write, and **Replace image…** swaps the picture under the node. The id survives, which is the point: every board that sends the reference links to that id, so deleting and re-adding would unlink it everywhere and lose the tag. Replacing keeps both, and every linked board picks the new picture up.
+
 ## Driving it from an agent
 
 `mcp.py` is an MCP server over stdio. It forwards every call to the running bench's HTTP API, so the bench stays the only writer and disk stays the source of truth. Register it once:
@@ -171,7 +173,7 @@ gen spend                               key usage and what is left
 
 ## Checking that the buttons work
 
-`web/_selftest.html` loads the canvas in an iframe and clicks through every control: boards, the bar, Still / Clip, the model picker, style chips, autosave, arming, card selection, drag onto a slot, the lightbox and its mask, the Styles panel, adding and deleting a shot, board reorder, a reference wired to a board, zoom, stitch, the still params against each model's published limits, the clamp that pulls a stored value back inside them, free placement, ctrl-dragging a node from its middle, and tidy, both ways of deleting a shot, the prompt bar folding through its four steps, and the shortcut sheet. It snapshots the whole film first and puts every shot and style back at the end. Its last line is either `no repairs needed` or a list of what it had to repair, and a repair means a step above did something it should not have.
+`web/_selftest.html` loads the canvas in an iframe and clicks through every control: boards, the bar, Still / Clip, the model picker, style chips, autosave, arming, card selection, drag onto a slot, the lightbox and its mask, the Styles panel, adding and deleting a shot, board reorder, a reference wired to a board, zoom, stitch, the still params against each model's published limits, the clamp that pulls a stored value back inside them, free placement, ctrl-dragging a node from its middle, and tidy, the reference lightbox and its name and tag round-trip, both ways of deleting a shot, the prompt bar folding through its four steps, and the shortcut sheet. It snapshots the whole film first and puts every shot and style back at the end. Its last line is either `no repairs needed` or a list of what it had to repair, and a repair means a step above did something it should not have.
 
 It exists because every control that used `window.prompt` once went dead when Chrome's "prevent this page from creating additional dialogs" was ticked. The page rendered, nothing threw, and no button worked. All dialogs here are in-page, and a script error shows a red banner instead of leaving dead buttons behind.
 

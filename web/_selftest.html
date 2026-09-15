@@ -345,6 +345,28 @@ document.getElementById('f').onload = async () => {
            ' | without ctrl unchanged=' + (was.x === now.x && was.y === now.y);
   });
 
+  await T('double-click a reference opens it, and its name and tag save there', async () => {
+    await closeAll();
+    const th = q('.refcard .rthumb');
+    if (!th) return 'no reference on this film';
+    const rid = th.closest('.refcard').dataset.ref;
+    const was = (await get()).refs.find(r => r.id === rid);
+    const [x, y] = center(th);
+    for (let i = 0; i < 2; i++) { d.elementFromPoint(x, y).dispatchEvent(pev('pointerdown', x, y)); q('#canvas').dispatchEvent(pev('pointerup', x, y)); }
+    await wait(600);
+    const opened = 'open=' + !q('#lb').hidden + ' refFoot=' + !q('#lbRefFoot').hidden +
+                   ' editFoot=' + !q('#lbFoot').hidden + ' mask=' + (win.getComputedStyle(q('#lbMaskTools')).display !== 'none');
+    q('#lbRefTag').value = 'SELFTEST TAG'; q('#lbRefSave').click(); await wait(900);
+    const mid = (await get()).refs.find(r => r.id === rid);
+    q('#lbRefTag').value = was.tag || ''; q('#lbRefName').value = was.name || '';
+    q('#lbRefSave').click(); await wait(900);
+    const back = (await get()).refs.find(r => r.id === rid);
+    key('Escape'); await wait(300);
+    return opened + ' | tag saved=' + (mid.tag === 'SELFTEST TAG') +
+           ' restored=' + (back.tag === (was.tag || '') && back.name === (was.name || '')) +
+           ' closedOnEsc=' + q('#lb').hidden;
+  });
+
   await T('linking a reference leaves its grip alone', async () => {
     const n = q('.refcard');
     if (!n) return 'no reference on this film';
